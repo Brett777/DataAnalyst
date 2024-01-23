@@ -184,7 +184,7 @@ def mainPage():
 
             try:
                 with st.expander(label="Data Dictionary", expanded=False):
-                    data = "First 10 Rows: \n" + str(df.head(10)) + "\n Dataset Summary using df.describe(): \n" + str(df.describe(include='all')) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
+                    data = "First 3 Rows: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
                     with st.spinner("Making dictionary..."):
                         dictionary = getDataDictionary(data)
                         st.markdown(dictionary)
@@ -198,7 +198,7 @@ def mainPage():
 
                 if submitQuestion:
                     with st.spinner("Analyzing... "):
-                        prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(5))+ "\n Data Profile: \n" + str(df.describe(include='all')) + "\nFrequent Values: \n" + str(get_top_frequent_values(df))
+                        prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
                         for i in range(0, 5):
                             while True:
                                 try:
