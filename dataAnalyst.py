@@ -1,15 +1,11 @@
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
 import os
-import keyword
-import datarobotx as drx
 import streamlit as st
-import hmac
-from snowflake.sqlalchemy import URL
-from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
+import time
 st.set_page_config(page_title="Data Analyst", layout="wide")
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
 
 def getDataDictionary(prompt):
     '''
@@ -92,11 +88,18 @@ def getChartCode(prompt):
         headers=headers
     )
 
-    return predictions_response.json()["data"][0]["prediction"]
+    # Safely get the 'data' key
+    data = predictions_response.json().get("data")
+    if data:
+        return predictions_response.json()["data"][0]["prediction"]
+    else:
+        print(predictions_response.json())
+        return predictions_response.json()
 def createCharts(prompt, pythonCode, results):
+    # Wait for 2 seconds to avoid rate limit
+    time.sleep(2.1)
     chartCode = getChartCode(prompt + str(pythonCode) + str(results))
-    print(chartCode.replace("```python", "").replace("```", ""))
-    chartCode = chartCode.replace("```python", "").replace("```", "")
+    print(chartCode)
     function_dict = {}
     exec(chartCode, function_dict)  # execute the code created by our LLM
     print("creating charts...")
@@ -107,6 +110,8 @@ def getBusinessAnalysis(prompt):
     '''
     Given the question, the Python Code, and the Result, retrieve the business analysis and suggestions.
     '''
+    # Wait for 2 seconds to avoid rate limit
+    time.sleep(2.1)
     data = pd.DataFrame({"promptText": [prompt]})
     API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = os.environ["DATAROBOT_API_TOKEN"]
@@ -123,8 +128,13 @@ def getBusinessAnalysis(prompt):
         data=data.to_json(orient='records'),
         headers=headers
     )
-
-    return predictions_response.json()["data"][0]["prediction"]
+    # Safely get the 'data' key
+    data = predictions_response.json().get("data")
+    if data:
+        return predictions_response.json()["data"][0]["prediction"]
+    else:
+        print(predictions_response.json())
+        return predictions_response.json()
 def get_top_frequent_values(df):
     # Select non-numeric columns
     non_numeric_cols = df.select_dtypes(exclude=['number']).columns
@@ -226,7 +236,7 @@ def mainPage():
 
                     with st.spinner("Business analysis..."):
                         with st.expander(label="Business Analysis", expanded=True):
-                            analysis = getBusinessAnalysis(prompt + pythonCode + str(results))
+                            analysis = getBusinessAnalysis(prompt + str(pythonCode) + str(results))
                             st.markdown(analysis.replace("$", "\$"))
 
 # Main app
