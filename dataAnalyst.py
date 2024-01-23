@@ -7,6 +7,7 @@ st.set_page_config(page_title="Data Analyst", layout="wide")
 pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 
+@st.cache_data(show_spinner=False)
 def getDataDictionary(prompt):
     '''
     Submits the data, gets dictionary
@@ -98,11 +99,12 @@ def getChartCode(prompt):
 def createCharts(prompt, pythonCode, results):
     # Wait for 2 seconds to avoid rate limit
     time.sleep(2.1)
+    print("getting chart code...")
     chartCode = getChartCode(prompt + str(pythonCode) + str(results))
-    print(chartCode)
+    print(chartCode.replace("```python", "").replace("```", ""))
     function_dict = {}
-    exec(chartCode, function_dict)  # execute the code created by our LLM
-    print("creating charts...")
+    exec(chartCode.replace("```python", "").replace("```", ""), function_dict)  # execute the code created by our LLM
+    print("executing chart code...")
     create_charts = function_dict['create_charts']  # get the function that our code created
     fig1, fig2 = create_charts(results)
     return fig1, fig2
@@ -199,13 +201,22 @@ def mainPage():
                 if submitQuestion:
                     with st.spinner("Analyzing... "):
                         prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
-                        for i in range(0, 5):
-                            while True:
-                                try:
-                                    pythonCode, results = executePythonCode(prompt, df)
-                                except:
-                                    pass
-                                break
+
+
+                        attempts = 0
+                        max_retries = 3
+                        while attempts < max_retries:
+                            try:
+                                pythonCode, results = executePythonCode(prompt, df)
+                                break  # If the function succeeds, exit the loop
+                            except Exception as e:
+                                attempts += 1
+                                print(f"Attempt {attempts} failed with error: {e}")
+                                if attempts == max_retries:
+                                    print("Max retries reached.")
+                                    st.write("I'm having trouble plotting this.")
+                                    break
+
                         try:
                             with st.expander(label="Code", expanded=False):
                                 st.code(pythonCode, language="python")
@@ -216,8 +227,9 @@ def mainPage():
 
                     with st.spinner("Visualization in progress..."):
                         with st.expander(label="Charts", expanded=True):
+
                             attempt_count = 0
-                            max_attempts = 4
+                            max_attempts = 2
                             while attempt_count < max_attempts:
                                 try:
                                     fig1, fig2 = createCharts(prompt, pythonCode, results)
@@ -232,11 +244,13 @@ def mainPage():
                                     st.write("I was unable to plot the data.")
                                     # Handle the failure after the final attempt
                                 else:
+                                    time.sleep(2)
                                     print("Retrying the charts...")
 
                     with st.spinner("Business analysis..."):
                         with st.expander(label="Business Analysis", expanded=True):
-                            analysis = getBusinessAnalysis(prompt + str(pythonCode) + str(results))
+                            #analysis = getBusinessAnalysis(prompt + str(pythonCode) + str(results))
+                            analysis = getBusinessAnalysis(prompt + str(results))
                             st.markdown(analysis.replace("$", "\$"))
 
 # Main app
