@@ -200,8 +200,7 @@ def mainPage():
 
                 if submitQuestion:
                     with st.spinner("Analyzing... "):
-                        prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
-
+                        prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df)) + str("\n Data Dictionary: \n") + str(dictionary)
 
                         attempts = 0
                         max_retries = 3
