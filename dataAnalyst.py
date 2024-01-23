@@ -159,15 +159,27 @@ def mainPage():
             # Display the dataframe
             with st.expander(label="First 10 Rows", expanded=False):
                 st.dataframe(df.head(10))
-            with st.expander(label="Column Descriptions", expanded=False):
-                st.dataframe(df.describe(include='all'))
-            with st.expander(label="Unique and Frequent Values", expanded=False):
-                st.dataframe(get_top_frequent_values(df))
-            with st.expander(label="Data Dictionary", expanded=False):
-                data = "First 10 Rows: \n" + str(df.head(10)) + "\n Dataset Summary using df.describe(): \n" + str(df.describe(include='all')) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
-                with st.spinner("Making dictionary..."):
-                    dictionary = getDataDictionary(data)
-                    st.markdown(dictionary)
+
+            try:
+                with st.expander(label="Column Descriptions", expanded=False):
+                    st.dataframe(df.describe(include='all'))
+            except:
+                pass
+
+            try:
+                with st.expander(label="Unique and Frequent Values", expanded=False):
+                    st.dataframe(get_top_frequent_values(df))
+            except:
+                pass
+
+            try:
+                with st.expander(label="Data Dictionary", expanded=False):
+                    data = "First 10 Rows: \n" + str(df.head(10)) + "\n Dataset Summary using df.describe(): \n" + str(df.describe(include='all')) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
+                    with st.spinner("Making dictionary..."):
+                        dictionary = getDataDictionary(data)
+                        st.markdown(dictionary)
+            except:
+                pass
 
             with tab2:
                 st.subheader("Ask a question about the data.")
