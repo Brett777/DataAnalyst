@@ -213,7 +213,7 @@ def mainPage():
                                 print(f"Attempt {attempts} failed with error: {e}")
                                 if attempts == max_retries:
                                     print("Max retries reached.")
-                                    st.write("I'm having trouble plotting this.")
+                                    # st.write("I'm having trouble plotting this.")
                                     break
 
                         try:
@@ -246,11 +246,14 @@ def mainPage():
                                     time.sleep(2)
                                     print("Retrying the charts...")
 
-                    with st.spinner("Business analysis..."):
+
                         with st.expander(label="Business Analysis", expanded=True):
-                            #analysis = getBusinessAnalysis(prompt + str(pythonCode) + str(results))
-                            analysis = getBusinessAnalysis(prompt + str(results))
-                            st.markdown(analysis.replace("$", "\$"))
+                            with st.spinner("Business analysis..."):
+                                try:
+                                    analysis = getBusinessAnalysis(prompt + str(results))
+                                    st.markdown(analysis.replace("$", "\$"))
+                                except:
+                                    st.write("I am unable to provide the analysis. Please rephrase the question and try again.")
 
 # Main app
 def _main():
