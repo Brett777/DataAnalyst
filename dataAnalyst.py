@@ -159,7 +159,7 @@ def get_top_frequent_values(df):
 def mainPage():
     st.image("datarobotLogo.png", width=200)
     st.title("AI Data Analyst")
-    st.write("DataRobot's recommendation system suggests and integrates additional data sources to enhance model accuracy, starting with a user-friendly interface. Users can upload any demo dataset into the app through drag-and-drop or browsing. The app inspects the file, gathering metadata like column names, data samples, and frequent values. Utilizing Generative AI, it builds a descriptive data dictionary. In the Analyze tab, users can query the dataset, as the language model interprets and writes code to extract relevant data, even when column names differ. Results are displayed in tables and visualized with intelligently selected charts. The system also offers insights on aspects like profitability and growth and suggests follow-up questions for deeper analysis using other data in the system, ensuring a thorough and intuitive exploration of datasets.")
+    st.write("This application helps answer complex business questions using Generative AI, Machine Learning and Statistics. It can read your CSV files, or connect to database. It suggests and integrates additional data to enhance the analysis and provide the user with the most insightful answers possible.")
     tab1, tab2 = st.tabs(["Upload Data", "Analyze"])
 
     with tab1:
