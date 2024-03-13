@@ -11,3 +11,5 @@ plotly
 nbformat
 scikit-learn
 xgboost
+anthropic
+openai
