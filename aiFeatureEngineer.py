@@ -205,12 +205,14 @@ def getDataQualityReport(prompt):
         form of a python dictionary that simply identifies the columns that contain the issues
         
         The code should be redundant to errors, with a high likelihood of successfully executing. 
-        The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries. 
-        Your entire response must be executable Python and NO OTHER text. 
+        The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+        
+        KEY CONSIDERATIONS: 
+        Your entire response must be a Python function and NO OTHER text. 
         Do NOT include an explanation of how the function works!
         Do NOT provide an example of how to use the function!
         Any text that is not Python code MUST be commented!
-        The entire response MUST ONLY BE PYTHON CODE!        
+        The entire response MUST ONLY BE THE PYTHON FUNCTION ITESELF.     
           
         """,
         messages=[
