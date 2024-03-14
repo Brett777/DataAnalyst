@@ -6,7 +6,9 @@ import streamlit as st
 import time
 import openai
 import anthropic
-st.set_page_config(page_title="Data Analyst", layout="wide")
+import concurrent.futures
+
+st.set_page_config(page_title="AI Feature Engineer", layout="wide")
 pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 
@@ -171,6 +173,7 @@ def extract_python_code(markdown_text):
     # Join all matches into a single string, separated by two newlines
     python_code = '\n\n'.join(matches)
     return python_code
+@st.cache_data(show_spinner=False)
 def getDataQualityReport(prompt):
     message = anthropicClient.messages.create(
         model="claude-3-opus-20240229",
@@ -234,6 +237,7 @@ def executeDataQualityReport(prompt, df):
     quality_report = function_dict['quality_report']  # get the function that our code created
     results = quality_report(df)
     return pythonCode, results
+@st.cache_data(show_spinner=False)
 def interpretDataQualityReport(report):
     message = openaiClient.chat.completions.create(
         model="gpt-4",
@@ -248,15 +252,438 @@ def interpretDataQualityReport(report):
     )
     return message.choices[0].message.content
 
-#def createDataQualitySolutions(report):
+def createFeatureEngineeringCode(prompt):
+    message = anthropicClient.messages.create(
+        model="claude-3-opus-20240229",
+        max_tokens=1024,
+        system="""
+           You are a data scientist and feature engineering expert in Python. 
+           Your job is to write a python function called engineer_features() which takes a single parameter as input, a pandas 
+           dataframe, and returns the dataset with the newly engineered features as additional columns. 
+           
+           FEATURE ENGINEERING:
+           You will be provided with information about the machine learning use case such as the modeling objectives
+           and the target variable. You will also be provided with a data quality report that identifies missing values, 
+           and other issues that might impede models' ability to learn from the data. 
+           Based on what you know about the data, come up with some feature engineering steps that would improve a 
+           machine learning model's ability to estimate the target.
+           Some feature engineering steps you might consider:           
+           - Consider resolving some or all of the data quality problems
+           - Include anomaly detection or clustering
+           - Look for ratios
+           - Look for features that you could sum, and use as a numerator in a ratio
+           - Interaction terms
+           - polynomial features
+           - normalizing and scaling
+           - log transformation
+           - outlier detection using Z-scores, the Interquartile Range (IQR) method, or using algorithms like Isolation Forest
+           - No need to one-hot-encode categorical data
+                 
+           METADATA:
+           You will see the first 3 rows of the dataset.
+           For categorical data, you will see all of the unique values.
+           You will get a data dictionary.
+           You will be informed of the target variable in the machine learning project.
+           You will be informed of any data quality problems. 
+           You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+           you can improve or add to it. 
 
+           YOUR RESPONSE:
+           Your response shall only contain a Python function called engineer_features(). 
+           The code should be redundant to errors, with a high likelihood of successfully executing. 
+           The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+           Any libraries your function requires should be imported
+
+           KEY CONSIDERATIONS: 
+           No need to one-hot-encode
+           Your entire response must be the Python function and NO OTHER text. 
+           Do NOT include an explanation of how the function works!
+           Do NOT provide an example of how to use the function!
+           Any text that is not Python code MUST be commented!
+           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+           """,
+        messages=[
+            {"role": "user", "content": str(prompt)}
+        ]
+    )
+    return message.content[0].text
+
+def createFeatureEngineeringCodeGemini(prompt):
+    '''
+        Submits the prompt, gets feature engineering code
+    '''
+    system_prompt = """
+           You are a data scientist and feature engineering expert in Python. 
+           Your job is to write a python function called engineer_features() which takes a single parameter as input, a pandas 
+           dataframe, and returns the dataset with the newly engineered features as additional columns. 
+           
+           FEATURE ENGINEERING:
+           You will be provided with information about the machine learning use case such as the modeling objectives
+           and the target variable. You will also be provided with a data quality report that identifies missing values, 
+           and other issues that might impede models' ability to learn from the data. 
+           Based on what you know about the data, come up with some feature engineering steps that would improve a 
+           machine learning model's ability to estimate the target.
+           Some feature engineering steps you might consider:           
+           - Consider resolving some or all of the data quality problems
+           - Include anomaly detection or clustering
+           - Look for ratios
+           - Look for features that you could sum, and use as a numerator in a ratio
+           - Interaction terms
+           - polynomial features
+           - normalizing and scaling
+           - log transformation
+           - outlier detection using Z-scores, the Interquartile Range (IQR) method, or using algorithms like Isolation Forest
+           - No need to one-hot-encode categorical data
+                 
+           METADATA:
+           You will see the first 3 rows of the dataset.
+           For categorical data, you will see all of the unique values.
+           You will get a data dictionary.
+           You will be informed of the target variable in the machine learning project.
+           You will be informed of any data quality problems. 
+           You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+           you can improve or add to it. 
+
+           YOUR RESPONSE:
+           Your response shall only contain a Python function called engineer_features(). 
+           The code should be redundant to errors, with a high likelihood of successfully executing. 
+           The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+           Any libraries your function requires should be imported
+
+           KEY CONSIDERATIONS: 
+           No need to one-hot-encode
+           Your entire response must be the Python function and NO OTHER text. 
+           Do NOT include an explanation of how the function works!
+           Do NOT provide an example of how to use the function!
+           Any text that is not Python code MUST be commented!
+           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+           """
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f2135562c4c2778aa48813'
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
+
+def createFeatureEngineeringCodeAnthropic(prompt):
+    '''
+        Submits the prompt, gets feature engineering code
+    '''
+    system_prompt = """
+           You are a data scientist and feature engineering expert in Python. 
+           Your job is to write a python function called engineer_features() which takes a single parameter as input, a pandas 
+           dataframe, and returns the dataset with the newly engineered features as additional columns. 
+
+           FEATURE ENGINEERING:
+           You will be provided with information about the machine learning use case such as the modeling objectives
+           and the target variable. You will also be provided with a data quality report that identifies missing values, 
+           and other issues that might impede models' ability to learn from the data. 
+           Based on what you know about the data, come up with some feature engineering steps that would improve a 
+           machine learning model's ability to estimate the target.
+           Some feature engineering steps you might consider:           
+           - Consider resolving some or all of the data quality problems
+           - Include anomaly detection or clustering
+           - Look for ratios
+           - Look for features that you could sum, and use as a numerator in a ratio
+           - Interaction terms
+           - polynomial features
+           - normalizing and scaling
+           - log transformation
+           - outlier detection using Z-scores, the Interquartile Range (IQR) method, or using algorithms like Isolation Forest
+           - No need to one-hot-encode categorical data
+
+           METADATA:
+           You will see the first 3 rows of the dataset.
+           For categorical data, you will see all of the unique values.
+           You will get a data dictionary.
+           You will be informed of the target variable in the machine learning project.
+           You will be informed of any data quality problems. 
+           You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+           you can improve or add to it. 
+
+           YOUR RESPONSE:
+           Your response shall only contain a Python function called engineer_features(). 
+           The code should be redundant to errors, with a high likelihood of successfully executing. 
+           The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+           Any libraries your function requires should be imported
+
+           KEY CONSIDERATIONS: 
+           No need to one-hot-encode
+           Your entire response must be the Python function and NO OTHER text. 
+           Do NOT include an explanation of how the function works!
+           Do NOT provide an example of how to use the function!
+           Any text that is not Python code MUST be commented!
+           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+           """
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f220b5cc4961bfcda48c5b'
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
+
+def createFeatureEngineeringCodeOpenAI(prompt):
+    '''
+        Submits the prompt, gets feature engineering code
+    '''
+    system_prompt = """
+           You are a data scientist and feature engineering expert in Python. 
+           Your job is to write a python function called engineer_features() which takes a single parameter as input, a pandas 
+           dataframe, and returns the dataset with the newly engineered features as additional columns. 
+
+           FEATURE ENGINEERING:
+           You will be provided with information about the machine learning use case such as the modeling objectives
+           and the target variable. You will also be provided with a data quality report that identifies missing values, 
+           and other issues that might impede models' ability to learn from the data. 
+           Based on what you know about the data, come up with some feature engineering steps that would improve a 
+           machine learning model's ability to estimate the target.
+           Some feature engineering steps you might consider:           
+           - Consider resolving some or all of the data quality problems
+           - Include anomaly detection or clustering
+           - Look for ratios
+           - Look for features that you could sum, and use as a numerator in a ratio
+           - Interaction terms
+           - polynomial features
+           - normalizing and scaling
+           - log transformation
+           - outlier detection using Z-scores, the Interquartile Range (IQR) method, or using algorithms like Isolation Forest
+           - No need to one-hot-encode categorical data
+
+           METADATA:
+           You will see the first 3 rows of the dataset.
+           For categorical data, you will see all of the unique values.
+           You will get a data dictionary.
+           You will be informed of the target variable in the machine learning project.
+           You will be informed of any data quality problems. 
+           You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+           you can improve or add to it. 
+
+           YOUR RESPONSE:
+           Your response shall only contain a Python function called engineer_features(). 
+           The code should be redundant to errors, with a high likelihood of successfully executing. 
+           The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+           Any libraries your function requires should be imported
+
+           KEY CONSIDERATIONS: 
+           No need to one-hot-encode
+           Your entire response must be the Python function and NO OTHER text. 
+           Do NOT include an explanation of how the function works!
+           Do NOT provide an example of how to use the function!
+           Any text that is not Python code MUST be commented!
+           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+           """
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f22baee48be774cda48a81'
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
+
+def combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode):
+    '''
+            Submits code from 3 LLMs, combines the solutions
+    '''
+    system_prompt = """
+               You are a data scientist and feature engineering expert in Python. 
+               You will be provided with 3 versions of a function called engineer_features().
+               Your job is to combine ideas from these functions into a final answer. 
+               The goal is a final version that is more comprehensive and better than any of the individual functions. 
+               Your final version of the engineer_features() function will take a single parameter as input, a pandas 
+               dataframe, and return the dataset with the engineered features as additional columns.               
+
+               METADATA:
+               You will see the first 3 rows of the dataset.
+               For categorical data, you will see all of the unique values.
+               You will get a data dictionary.
+               You will be informed of the target variable in the machine learning project.
+               You will be informed of any data quality problems. 
+               You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+               you can improve or add to it. 
+
+               YOUR RESPONSE:
+               Your response shall only contain a Python function called engineer_features(). 
+               The code should be redundant to errors, with a high likelihood of successfully executing. 
+               The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+               Any libraries your function requires should be imported
+
+               KEY CONSIDERATIONS: 
+               Only reference columns that actually exist in the dataset. 
+               Column names must be spelled exactly as they are in the dataset. 
+               Your code should be robust to errors.
+               Ensure type compatability. I.e. cast columns to float using numeric operations.               
+               No need to one-hot-encode or create dummy features.
+               Your entire response must be the Python function and NO OTHER text. 
+               Do NOT include an explanation of how the function works!
+               Do NOT provide an example of how to use the function!
+               Any text that is not Python code MUST be commented!
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+               """
+    prompt = prompt + str(geminiFeatureEngCode) + str(anthropicFeatureEngCode) + str(openaiFeatureEngCode)
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f22baee48be774cda48a81' #open ai
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
+
+
+def getFeatureEngineeringCodeInParallel(prompt):
+    # Create a context manager for managing the thread pool
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit tasks to the executor for each function
+        future_gemini = executor.submit(createFeatureEngineeringCodeGemini,
+                                        prompt)  # Assuming a similar function for Gemini
+        future_anthropic = executor.submit(createFeatureEngineeringCodeAnthropic, prompt)
+        future_openai = executor.submit(createFeatureEngineeringCodeOpenAI, prompt)
+
+        # Wait for all futures to complete and retrieve results
+        try:
+            geminiFeatureEngCode = future_gemini.result()
+            anthropicFeatureEngCode = future_anthropic.result()
+            openaiFeatureEngCode = future_openai.result()
+        except Exception as exc:
+            print(f'Generated an exception: {exc}')
+            return None, None, None
+
+    return geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode
+
+def executeFeatureEngineeringCode(prompt, df):
+    '''
+        Executes the Python Code generated by the LLM
+    '''
+    print("Generating feature engineering code...")
+    geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode = getFeatureEngineeringCodeInParallel(prompt)
+    pythonCode = combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode)
+    pythonCode = extract_python_code(pythonCode)
+    print(pythonCode)
+    print("Executing feature engineering code...")
+    function_dict = {}
+    exec(pythonCode, function_dict)  # execute the code created by our LLM
+    engineer_features = function_dict['engineer_features']  # get the function that our code created
+    results = engineer_features(df)
+    return pythonCode, results
+
+def createFeatureEngineeringCodeReattempt(prompt):
+    '''
+    If the attempt to execute the code fails, try again by debugging given the error.
+    '''
+    system_prompt = """
+                   You are a data scientist and feature engineering expert in Python. 
+                   You will be provided with a function called engineer_features().
+                   For some reason discussed in the error message, the function fails to execute.
+                   Your job is to debug and provide a working version of the function while retaining the core 
+                   functionality of the function. 
+                                      
+                   Your final version of the engineer_features() function will take a single parameter as input, a pandas 
+                   dataframe, and return the dataset with the engineered features as additional columns.               
+
+                   METADATA:
+                   You will see the first 3 rows of the dataset.
+                   For categorical data, you will see all of the unique values.
+                   You will get a data dictionary.
+                   You will be informed of the target variable in the machine learning project.
+                   You will be informed of any data quality problems. 
+                   You may or may not receive a first pass at generating the engineer_features() function. If you receive it,
+                   you can improve or add to it. 
+
+                   YOUR RESPONSE:
+                   Your response shall only contain a Python function called engineer_features(). 
+                   The code should be redundant to errors, with a high likelihood of successfully executing. 
+                   The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
+                   Any libraries your function requires should be imported
+
+                   KEY CONSIDERATIONS: 
+                   Only reference columns that actually exist in the dataset. 
+                   Column names must be spelled exactly as they are in the dataset. 
+                   Your code should be robust to errors.
+                   Ensure type compatability. I.e. cast columns to float using numeric operations.               
+                   No need to one-hot-encode or create dummy features.
+                   Your entire response must be the Python function and NO OTHER text. 
+                   Do NOT include an explanation of how the function works!
+                   Do NOT provide an example of how to use the function!
+                   Any text that is not Python code MUST be commented!
+                   The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+
+                   """
+    prompt = prompt + str(geminiFeatureEngCode) + str(anthropicFeatureEngCode) + str(openaiFeatureEngCode)
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f22baee48be774cda48a81'  # open ai
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
 
 
 def mainPage():
     st.image("datarobotLogo.png", width=200)
     st.title("AI Feature Engineer")
     st.write("This application helps find and address data quality issues using Generative AI. It can read your CSV files, or connect to a database. In addition to cleaning your data it can help you wrangle, modify and create new features for machine learning.")
-    tab1, tab2 = st.tabs(["Upload and Explore", "Feature Engineering"])
+    tab1, tab2, tab3 = st.tabs(["Upload and Explore", "Automated Feature Engineering", "Interactive Feature Engineering"])
 
     with tab1:
         uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
@@ -320,72 +747,41 @@ def mainPage():
 
 
             with tab2:
-                st.subheader("First, let's clean up the data. We found the following data quality issues. Should we correct them?")
+                st.subheader("Before we begin, here are some potential data quality issues to be aware of. We'll be mindful of these as we proceed.")
                 dataQualityReportSummary = interpretDataQualityReport(dataQualityReport)
                 st.write(dataQualityReportSummary)
+                st.subheader("What is the Target in your machine learning project?")
+                targetColumn = st.selectbox(label="Target", options=df.columns)
+                prompt = "\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df)) + "\n Data Dictionary: \n" + str(dictionary) + "\n Data Quality Report: \n" + str(dataQualityReport) + "\n Target Feature for ML Project: " + str(targetColumn)
+                startButton = st.button(label="Start Feature Engineering")
 
-
-                st.subheader("Let's start feature engineering!")
-                prompt = st.text_input(label="Question")
-                submitQuestion = st.button(label="Ask")
-
-
-                if submitQuestion:
-                    with st.spinner("Analyzing... "):
-                        prompt = "Business Question: " +str(prompt) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df)) + str("\n Data Dictionary: \n") + str(dictionary)
-
+                if startButton:
+                    with st.spinner("Engineering Features... "):
+                        # prompt was set above when calling data quality report. Now calling feature engineering
                         attempts = 0
                         max_retries = 3
                         while attempts < max_retries:
                             try:
-                                pythonCode, results = executePythonCode(prompt, df)
+                                pythonCode, results = executeFeatureEngineeringCode(prompt, df)
                                 break  # If the function succeeds, exit the loop
                             except Exception as e:
                                 attempts += 1
                                 print(f"Attempt {attempts} failed with error: {e}")
                                 if attempts == max_retries:
                                     print("Max retries reached.")
-                                    # st.write("I'm having trouble plotting this.")
                                     break
 
                         try:
-                            with st.expander(label="Code", expanded=False):
+                            with st.expander(label="Feature Engineering Code", expanded=False):
                                 st.code(pythonCode, language="python")
-                            with st.expander(label="Result", expanded=True):
+                            with st.expander(label="Features", expanded=True):
                                 st.dataframe(results)
                         except:
                             st.write("I tried a few different ways, but couldn't get a working solution. Rephrase the question and try again.")
 
-                    with st.spinner("Visualization in progress..."):
-                        with st.expander(label="Charts", expanded=True):
+            with tab3:
+                st.subheader("What feature engineering steps would you like me to implement?")
 
-                            attempt_count = 0
-                            max_attempts = 2
-                            while attempt_count < max_attempts:
-                                try:
-                                    fig1, fig2 = createCharts(prompt, pythonCode, results)
-                                    st.plotly_chart(fig1, theme="streamlit", use_container_width=True)
-                                    st.plotly_chart(fig2, theme="streamlit", use_container_width=True)
-                                    break  # If operation succeeds, break out of the loop
-                                except Exception as e:
-                                    attempt_count += 1
-                                    print(f"Chart Attempt {attempt_count} failed with error: {e}")
-                                if attempt_count >= max_attempts:
-                                    print("Max charting attempts reached, handling the failure.")
-                                    st.write("I was unable to plot the data.")
-                                    # Handle the failure after the final attempt
-                                else:
-                                    time.sleep(2)
-                                    print("Retrying the charts...")
-
-
-                        with st.expander(label="Business Analysis", expanded=True):
-                            with st.spinner("Business analysis..."):
-                                try:
-                                    analysis = getBusinessAnalysis(prompt + str(results))
-                                    st.markdown(analysis.replace("$", "\$"))
-                                except:
-                                    st.write("I am unable to provide the analysis. Please rephrase the question and try again.")
 
 # Main app
 def _main():
