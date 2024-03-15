@@ -7,6 +7,7 @@ import time
 import openai
 import anthropic
 import concurrent.futures
+import datarobotx as drx
 
 st.set_page_config(page_title="AI Feature Engineer", layout="wide")
 pd.set_option('display.max_columns', 500)
@@ -897,10 +898,13 @@ def mainPage():
 
             with tab4:
                 project_name = st.text_input("Name your DataRobot Project")
+                # st.write(df)
                 if st.button(label="Launch DataRobot Project"):
                     automl = drx.AutoMLModel(name = project_name)
-                    automl.fit(df.drop([targetColumn], axis = 1), df[targetColumn])
                     st.markdown(f"https://app.datarobot.com/projects/{automl.dr_project.id}/models")
+                    with st.spinner("Launching DataRobot Project..."):
+                        automl.fit(df,targetColumn)
+                        
                     
 
                 
