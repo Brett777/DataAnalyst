@@ -41,8 +41,8 @@ def getDataDictionary(prompt):
     code = predictions_response.json()["data"][0]["prediction"]
     return code
 
-def getDataDictionary2(data):
-    types = str(data.dtypes)
+def getDataDictionary2(prompt, df):
+    types = str(df.dtypes)
     system_prompt = """
         You are a data dictionary maker. 
         You will receive the following:
@@ -55,7 +55,7 @@ def getDataDictionary2(data):
         Write a description for each column that will help an analyst effectively leverage this data in their analysis.
         The description should communicate what any acronymns might mean, what the business value of the data is, and what the analytic value might be. 
         You must describe ALL of the columns in the dataset to the best of your ability. 
-        Your response should be formatted in markdown as a table containing all of the columns names, their data type, along with your best attempt to describe what the column is about. 
+        Your response should be formatted in markdown as a table or list containing all of the columns names, their data type, along with your best attempt to describe what the column is about. 
             
         DATA TYPES:  
         """ + types
@@ -816,13 +816,13 @@ def mainPage():
 
             try:
                 with st.expander(label="Data Dictionary", expanded=False):
-                    data = "First 3 Rows: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
+                    prompt = "First 3 Rows: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
                     with st.spinner("Making dictionary..."):
-                        dictionary = getDataDictionary2(data)
+                        dictionary = getDataDictionary2(prompt, df)
                         st.markdown(dictionary)
 
-            except:
-                pass
+            except Exception as e:
+                st.write(e)
 
             try:
                 with st.expander(label="Data Quality Analysis Code", expanded=False):
