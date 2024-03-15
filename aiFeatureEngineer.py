@@ -900,10 +900,18 @@ def mainPage():
                 project_name = st.text_input("Name your DataRobot Project")
                 # st.write(df)
                 if st.button(label="Launch DataRobot Project"):
-                    automl = drx.AutoMLModel(name = project_name)
-                    st.markdown(f"https://app.datarobot.com/projects/{automl.dr_project.id}/models")
-                    with st.spinner("Launching DataRobot Project..."):
-                        automl.fit(df,targetColumn)
+                    with st.spinner("Launch DataRobot Project..."):
+                        client = dr.Client()
+                        project = dr.Project.create(sourcedata = df, project_name = "LC_TEST")
+                        project.set_worker_count(-1)
+                    with st.spinner("Setting target and starting modeling"):
+                        project.analyze_and_model(target="is_bad")
+                        st.markdown(project.get_uri())
+                    # project.get_uri()
+                    # automl = drx.AutoMLModel(name = project_name)
+                    # st.markdown(f"https://app.datarobot.com/projects/{automl.dr_project.id}/models")
+                    # with st.spinner("Launching DataRobot Project..."):
+                    #     automl.fit(df,targetColumn)
                         
                     
 
