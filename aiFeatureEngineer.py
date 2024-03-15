@@ -40,6 +40,45 @@ def getDataDictionary(prompt):
     )
     code = predictions_response.json()["data"][0]["prediction"]
     return code
+
+def getDataDictionary2(data):
+    types = str(data.dtypes)
+    system_prompt = """
+        You are a data dictionary maker. 
+        You will receive the following:
+        1) The data type of each column
+        2) The first 10 rows of a dataframe
+        3) A summary of the data computed using pandas .describe()
+        4) For categorical data, a list of the unique values limited to the top 10 most frequent values.
+        
+        Inspect this metadata to decipher what each column in the dataset is about is about.        
+        Write a description for each column that will help an analyst effectively leverage this data in their analysis.
+        The description should communicate what any acronymns might mean, what the business value of the data is, and what the analytic value might be. 
+        You must describe ALL of the columns in the dataset to the best of your ability. 
+        Your response should be formatted in markdown as a table containing all of the columns names, their data type, along with your best attempt to describe what the column is about. 
+            
+        DATA TYPES:  
+        """ + types
+    data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
+    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
+    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
+    deployment_id = '65f22baee48be774cda48a81' #openai
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    return code
+
+
 def getPythonCode(prompt):
     '''
     Submits the user's prompt to DataRobot, gets Python
@@ -155,11 +194,19 @@ def get_top_frequent_values(df):
 
     # Iterate over non-numeric columns
     for col in non_numeric_cols:
-        # Find top 10 most frequent values for the column
-        top_values = df[col].value_counts().head(10).index.tolist()
+        try:
+            # Ensure strings and fill NaNs to prevent type issues
+            cleaned_col = df[col].fillna('Missing').astype(str)
 
-        # Append the column name and its frequent values to the results
-        results.append({'Non-numeric column name': col, 'Frequent Values': top_values})
+            # Find top 10 most frequent values for the column
+            top_values = cleaned_col.value_counts().head(10).index.tolist()
+
+            # Append the column name and its frequent values to the results
+            results.append({'Non-numeric column name': col, 'Frequent Values': top_values})
+        except Exception as e:
+            print(f"Error processing column {col}: {e}")
+            # Optionally, append an error indicator or use a placeholder value
+            results.append({'Non-numeric column name': col, 'Frequent Values': ['Error processing column']})
 
     # Create a new DataFrame for the results
     result_df = pd.DataFrame(results)
@@ -685,9 +732,12 @@ def createFeatureEngineeringCodeReattempt(prompt):
                    Only reference columns that actually exist in the dataset. 
                    Column names must be spelled exactly as they are in the dataset. 
                    Your code should be robust to errors.
-                   Ensure type compatability! 
+                   Pay close attention to data types when operating on columns!
+                   Ensure data type compatability! 
                    I.e. cast columns to float when using numeric operations on those columns!
-                   I.e. cast columns to string when using string operations on those columns!                         
+                   I.e. cast columns to string when using string operations on those columns!   
+                   Be sure that the final dataframe returned does not contain duplicate column names!
+                   Do not duplicate feature engineering steps!                      
                    No need to one-hot-encode or create dummy features.
                    Your entire response must be the Python function and NO OTHER text. 
                    Do NOT include an explanation of how the function works!
@@ -768,7 +818,7 @@ def mainPage():
                 with st.expander(label="Data Dictionary", expanded=False):
                     data = "First 3 Rows: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df))
                     with st.spinner("Making dictionary..."):
-                        dictionary = getDataDictionary(data)
+                        dictionary = getDataDictionary2(data)
                         st.markdown(dictionary)
 
             except:
