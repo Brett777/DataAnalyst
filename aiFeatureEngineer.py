@@ -41,6 +41,7 @@ def getDataDictionary(prompt):
     code = predictions_response.json()["data"][0]["prediction"]
     return code
 
+@st.cache_data(show_spinner=False)
 def getDataDictionary2(prompt, df):
     types = str(df.dtypes)
     system_prompt = """
@@ -409,18 +410,24 @@ def createFeatureEngineeringCodeGemini(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
+               Pay close attention to data types when operating on columns!               
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!  
+               For example:
+               df['revol_util_percent'] = df['revol_util'].str.replace('%', '').astype(float)
+               Will throw an error AttributeError("Can only use .str accessor with string values!") if df['revol_util'] is numeric.
+               Ensure data type compatability! 
                Only reference columns that actually exist in the dataset. 
                Column names must be spelled exactly as they are in the dataset. 
-               Your code should be robust to errors.
-               Ensure type compatability! 
-               I.e. cast columns to float when using numeric operations on those columns!
-               I.e. cast columns to string when using string operations on those columns!                         
+               Your code should be robust to errors.             
+               Be sure that the final dataframe returned does not contain duplicate column names!
+               Do not duplicate feature engineering steps!                      
                No need to one-hot-encode or create dummy features.
                Your entire response must be the Python function and NO OTHER text. 
                Do NOT include an explanation of how the function works!
                Do NOT provide an example of how to use the function!
                Any text that is not Python code MUST be commented!
-               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.       
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -485,18 +492,24 @@ def createFeatureEngineeringCodeAnthropic(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
+               Pay close attention to data types when operating on columns!               
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!  
+               For example:
+               df['revol_util_percent'] = df['revol_util'].str.replace('%', '').astype(float)
+               Will throw an error AttributeError("Can only use .str accessor with string values!") if df['revol_util'] is numeric.
+               Ensure data type compatability! 
                Only reference columns that actually exist in the dataset. 
                Column names must be spelled exactly as they are in the dataset. 
-               Your code should be robust to errors.
-               Ensure type compatability! 
-               I.e. cast columns to float when using numeric operations on those columns!
-               I.e. cast columns to string when using string operations on those columns!                         
+               Your code should be robust to errors.             
+               Be sure that the final dataframe returned does not contain duplicate column names!
+               Do not duplicate feature engineering steps!                      
                No need to one-hot-encode or create dummy features.
                Your entire response must be the Python function and NO OTHER text. 
                Do NOT include an explanation of how the function works!
                Do NOT provide an example of how to use the function!
                Any text that is not Python code MUST be commented!
-               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.       
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -561,18 +574,24 @@ def createFeatureEngineeringCodeOpenAI(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
+               Pay close attention to data types when operating on columns!               
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!  
+               For example:
+               df['revol_util_percent'] = df['revol_util'].str.replace('%', '').astype(float)
+               Will throw an error AttributeError("Can only use .str accessor with string values!") if df['revol_util'] is numeric.
+               Ensure data type compatability! 
                Only reference columns that actually exist in the dataset. 
                Column names must be spelled exactly as they are in the dataset. 
-               Your code should be robust to errors.
-               Ensure type compatability! 
-               I.e. cast columns to float when using numeric operations on those columns!
-               I.e. cast columns to string when using string operations on those columns!                         
+               Your code should be robust to errors.             
+               Be sure that the final dataframe returned does not contain duplicate column names!
+               Do not duplicate feature engineering steps!                      
                No need to one-hot-encode or create dummy features.
                Your entire response must be the Python function and NO OTHER text. 
                Do NOT include an explanation of how the function works!
                Do NOT provide an example of how to use the function!
                Any text that is not Python code MUST be commented!
-               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.       
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -601,8 +620,8 @@ def combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthrop
     system_prompt = """
                You are a data scientist and feature engineering expert in Python. 
                You will be provided with 3 versions of a function called engineer_features().
-               Your job is to combine ideas and techniques from these functions into a final function. 
-               The goal is a final version that is more comprehensive and better than any of the individual functions. 
+               Your job is to include ALL of the techniques from each of these functions into a final solution. 
+               The goal is a final version of the function that is more comprehensive and better than the individual functions. 
                Your final version of the engineer_features() function will take a single parameter as input, a pandas 
                dataframe, and return the dataset with the engineered features as additional columns. Be sure that your
                solution does not result in any duplicate column names.                
@@ -618,34 +637,41 @@ def combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthrop
 
                YOUR RESPONSE:
                Your response shall only contain a Python function called engineer_features(). 
-               The code should be redundant to errors, with a high likelihood of successfully executing. 
+               Your response shall combine ALL of the techniques from each of the provided functions into your final solution.
+               Do not duplicate features. If the same feature engineering technique exists in multiple functions, only include it
+               once in your version of the function.
+               The code should be redundant to errors, with a high likelihood of successfully executing.
+               Do not make syntax errors. 
                The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
                Any libraries your function requires should be imported               
 
-               KEY CONSIDERATIONS: 
-               Only reference columns that actually exist in the dataset. 
+               EXTREMELY IMPORTANT CONSIDERATIONS: 
+               Pay close attention to data types when operating on columns!!!               
+               Cast columns to float or int prior to using numeric operations on those columns!
+               Cast columns to object prior using string operations on those columns!  
+               For example:
+               df['revol_util'].str.replace('%', '')
+               Will throw an error AttributeError("Can only use .str accessor with string values!") if df['revol_util'] is numeric.
+               It is very common to run into the error: "Can only use .str accessor with string values!". Therefore cast
+               columns to type object before using .str accessor.
+               Ensure data type compatability!                
                Column names must be spelled exactly as they are in the dataset. 
-               Your code should be robust to errors.
-               Pay close attention to data types when operating on columns!
-               Ensure data type compatability! 
-               I.e. cast columns to float when using numeric operations on those columns!
-               I.e. cast columns to string when using string operations on those columns!   
+               Your code should be robust to errors.             
                Be sure that the final dataframe returned does not contain duplicate column names!
                Do not duplicate feature engineering steps!                      
                No need to one-hot-encode or create dummy features.
                Your entire response must be the Python function and NO OTHER text. 
                Do NOT include an explanation of how the function works!
                Do NOT provide an example of how to use the function!
-               Any text that is not Python code MUST be commented!
-               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+               Any text that is not Python code MUST be commented!                  
 
                """
-    prompt = prompt + str(geminiFeatureEngCode) + str(anthropicFeatureEngCode) + str(openaiFeatureEngCode)
+    prompt = prompt + "\nFUNCTION V1: \n" + str(geminiFeatureEngCode) + "\nFUNCTION V2: \n" + str(anthropicFeatureEngCode) + "\nFUNCTION V3: \n" + str(openaiFeatureEngCode)
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
     API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = os.environ["DATAROBOT_API_TOKEN"]
     DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
-    deployment_id = '65f220b5cc4961bfcda48c5b' #anthropic
+    deployment_id = '65f2135562c4c2778aa48813' #gemini
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -663,22 +689,31 @@ def combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthrop
 def getFeatureEngineeringCodeInParallel(prompt):
     # Create a context manager for managing the thread pool
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Submit tasks to the executor for each function
-        future_gemini = executor.submit(createFeatureEngineeringCodeGemini,
-                                        prompt)  # Assuming a similar function for Gemini
-        future_anthropic = executor.submit(createFeatureEngineeringCodeAnthropic, prompt)
-        future_openai = executor.submit(createFeatureEngineeringCodeOpenAI, prompt)
+        # Dictionary to map futures to their corresponding functions
+        future_to_function = {
+            executor.submit(createFeatureEngineeringCodeGemini, prompt): 'Gemini',
+            executor.submit(createFeatureEngineeringCodeAnthropic, prompt): 'Anthropic',
+            executor.submit(createFeatureEngineeringCodeOpenAI, prompt): 'OpenAI'
+        }
 
-        # Wait for all futures to complete and retrieve results
-        try:
-            geminiFeatureEngCode = future_gemini.result()
-            anthropicFeatureEngCode = future_anthropic.result()
-            openaiFeatureEngCode = future_openai.result()
-        except Exception as exc:
-            print(f'Generated an exception: {exc}')
-            return None, None, None
+        # Initialize the results dictionary
+        results = {}
 
-    return geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode
+        # Use as_completed to iterate over futures as they complete
+        for future in concurrent.futures.as_completed(future_to_function):
+            function_name = future_to_function[future]
+            try:
+                # Retrieve the result of the completed future
+                result = future.result()
+                print(f"{function_name} feature engineering code is ready.")
+                # Store the result with the function name as key
+                results[function_name] = result
+            except Exception as exc:
+                print(f'Generated an exception for {function_name}: {exc}')
+                results[function_name] = None
+
+    # Return the results for Gemini, Anthropic, and OpenAI, handling cases where any are missing
+    return results.get('Gemini'), results.get('Anthropic'), results.get('OpenAI')
 
 def executeFeatureEngineeringCode(prompt, df):
     '''
@@ -697,7 +732,7 @@ def executeFeatureEngineeringCode(prompt, df):
         results = engineer_features(df)
     except Exception as e:
         results = e
-    return pythonCode, results
+    return pythonCode, results, geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode
 
 def createFeatureEngineeringCodeReattempt(prompt):
     '''
@@ -771,7 +806,7 @@ def executeFeatureEngineeringCodeReattempt(prompt, df):
         Executes the Python Code generated by the LLM
     '''
     print("Reattempting feature engineering code...")
-    geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode = getFeatureEngineeringCodeInParallel(prompt)
+    #geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode = getFeatureEngineeringCodeInParallel(prompt)
     pythonCode = createFeatureEngineeringCodeReattempt(prompt)
     pythonCode = extract_python_code(pythonCode)
     print(pythonCode)
@@ -846,7 +881,7 @@ def mainPage():
                 pass
 
             try:
-                with st.expander(label="Data Quality Report", expanded=True):
+                with st.expander(label="Data Quality Report", expanded=False):
                     with st.spinner("Executing data quality assessment..."):
                         st.write(dataQualityReport)
             except Exception as e:
@@ -866,12 +901,26 @@ def mainPage():
                     with st.spinner("Engineering Features... "):
                         # prompt was set above when calling data quality report. Now calling feature engineering
                         attempts = 0
-                        max_retries = 5
+                        max_retries = 10
                         while attempts < max_retries:
                             print("Attempt: " +str(attempts))
                             try:
                                 if attempts == 0:
-                                    pythonCode, results = executeFeatureEngineeringCode(prompt, df)
+                                    pythonCode, results, geminiFeatureEngCode, anthropicFeatureEngCode, openaiFeatureEngCode = executeFeatureEngineeringCode(prompt, df)
+                                    with st.expander(label="Individual Responses", expanded=False):
+                                        with st.container():
+                                            # Divide the container into 3 equally spaced columns
+                                            col1, col2, col3 = st.columns(3)
+                                            with col1:
+                                                st.subheader("Gemini Ultra")
+                                                st.code(geminiFeatureEngCode, language="python")
+                                            with col2:
+                                                st.subheader("Anthropic Claude3")
+                                                st.code(anthropicFeatureEngCode, language="python")
+                                            with col3:
+                                                st.subheader("OpenAI GPT-4")
+                                                st.code(openaiFeatureEngCode, language="python")
+
                                 else:
                                     pythonCode, results = executeFeatureEngineeringCodeReattempt("Function to fix: \n" + str(pythonCode) + "\nERROR MESSAGE: \n" + str(results) + "\nOTHER INFO: \n" + prompt, df)
 
@@ -887,7 +936,7 @@ def mainPage():
 
 
                         with st.expander(label="Feature Engineering Code", expanded=False):
-                            st.code(pythonCode, language="python")
+                            st.code(pythonCode, language="python", line_numbers=True)
                         with st.expander(label="Features", expanded=True):
                             st.write(results)
 
