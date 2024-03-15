@@ -789,7 +789,7 @@ def mainPage():
     st.image("datarobotLogo.png", width=200)
     st.title("AI Feature Engineer")
     st.write("This application helps find and address data quality issues using Generative AI. It can read your CSV files, or connect to a database. In addition to cleaning your data it can help you wrangle, modify and create new features for machine learning.")
-    tab1, tab2, tab3 = st.tabs(["Upload and Explore", "Automated Feature Engineering", "Interactive Feature Engineering"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Upload and Explore", "Automated Feature Engineering", "Interactive Feature Engineering", "Launch DataRobot Project"])
 
     with tab1:
         uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
@@ -894,6 +894,17 @@ def mainPage():
 
             with tab3:
                 st.subheader("What feature engineering steps would you like me to implement?")
+
+            with tab4:
+                project_name = st.text_input("Name your DataRobot Project")
+                if st.button(label="Launch DataRobot Project"):
+                    automl = drx.AutoMLModel(name = project_name)
+                    automl.fit(df.drop([targetColumn], axis = 1), df[targetColumn])
+                    st.markdown(f"https://app.datarobot.com/projects/{automl.dr_project.id}/models")
+                    
+
+                
+
 
 
 # Main app
