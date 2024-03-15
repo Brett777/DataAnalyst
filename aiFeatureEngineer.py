@@ -352,12 +352,18 @@ def createFeatureEngineeringCodeGemini(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
-           No need to one-hot-encode
-           Your entire response must be the Python function and NO OTHER text. 
-           Do NOT include an explanation of how the function works!
-           Do NOT provide an example of how to use the function!
-           Any text that is not Python code MUST be commented!
-           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+               Only reference columns that actually exist in the dataset. 
+               Column names must be spelled exactly as they are in the dataset. 
+               Your code should be robust to errors.
+               Ensure type compatability! 
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!                         
+               No need to one-hot-encode or create dummy features.
+               Your entire response must be the Python function and NO OTHER text. 
+               Do NOT include an explanation of how the function works!
+               Do NOT provide an example of how to use the function!
+               Any text that is not Python code MUST be commented!
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.       
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -422,12 +428,18 @@ def createFeatureEngineeringCodeAnthropic(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
-           No need to one-hot-encode
-           Your entire response must be the Python function and NO OTHER text. 
-           Do NOT include an explanation of how the function works!
-           Do NOT provide an example of how to use the function!
-           Any text that is not Python code MUST be commented!
-           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+               Only reference columns that actually exist in the dataset. 
+               Column names must be spelled exactly as they are in the dataset. 
+               Your code should be robust to errors.
+               Ensure type compatability! 
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!                         
+               No need to one-hot-encode or create dummy features.
+               Your entire response must be the Python function and NO OTHER text. 
+               Do NOT include an explanation of how the function works!
+               Do NOT provide an example of how to use the function!
+               Any text that is not Python code MUST be commented!
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.       
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -492,12 +504,18 @@ def createFeatureEngineeringCodeOpenAI(prompt):
            Any libraries your function requires should be imported
 
            KEY CONSIDERATIONS: 
-           No need to one-hot-encode
-           Your entire response must be the Python function and NO OTHER text. 
-           Do NOT include an explanation of how the function works!
-           Do NOT provide an example of how to use the function!
-           Any text that is not Python code MUST be commented!
-           The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+               Only reference columns that actually exist in the dataset. 
+               Column names must be spelled exactly as they are in the dataset. 
+               Your code should be robust to errors.
+               Ensure type compatability! 
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!                         
+               No need to one-hot-encode or create dummy features.
+               Your entire response must be the Python function and NO OTHER text. 
+               Do NOT include an explanation of how the function works!
+               Do NOT provide an example of how to use the function!
+               Any text that is not Python code MUST be commented!
+               The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
 
            """
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
@@ -544,13 +562,16 @@ def combineFeatureEngineeringCodeResponses(prompt, geminiFeatureEngCode, anthrop
                Your response shall only contain a Python function called engineer_features(). 
                The code should be redundant to errors, with a high likelihood of successfully executing. 
                The function may only rely on Python, pandas, numpy, scikit-learn, xgboost, SciPy, Statsmodels and no other libraries.
-               Any libraries your function requires should be imported
+               Any libraries your function requires should be imported               
 
                KEY CONSIDERATIONS: 
                Only reference columns that actually exist in the dataset. 
                Column names must be spelled exactly as they are in the dataset. 
                Your code should be robust to errors.
-               Ensure type compatability. I.e. cast columns to float using numeric operations.               
+               Pay close attention to data types when operating on columns!
+               Ensure data type compatability! 
+               I.e. cast columns to float when using numeric operations on those columns!
+               I.e. cast columns to string when using string operations on those columns!                         
                No need to one-hot-encode or create dummy features.
                Your entire response must be the Python function and NO OTHER text. 
                Do NOT include an explanation of how the function works!
@@ -651,16 +672,18 @@ def createFeatureEngineeringCodeReattempt(prompt):
                    Only reference columns that actually exist in the dataset. 
                    Column names must be spelled exactly as they are in the dataset. 
                    Your code should be robust to errors.
-                   Ensure type compatability. I.e. cast columns to float using numeric operations.               
+                   Ensure type compatability! 
+                   I.e. cast columns to float when using numeric operations on those columns!
+                   I.e. cast columns to string when using string operations on those columns!                         
                    No need to one-hot-encode or create dummy features.
                    Your entire response must be the Python function and NO OTHER text. 
                    Do NOT include an explanation of how the function works!
                    Do NOT provide an example of how to use the function!
                    Any text that is not Python code MUST be commented!
-                   The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.     
+                   The entire response MUST ONLY BE THE PYTHON FUNCTION ITSELF.    
 
                    """
-    prompt = prompt + str(geminiFeatureEngCode) + str(anthropicFeatureEngCode) + str(openaiFeatureEngCode)
+    #prompt = prompt + str(geminiFeatureEngCode) + str(anthropicFeatureEngCode) + str(openaiFeatureEngCode)
     data = pd.DataFrame([{"promptText": prompt, "systemPrompt": system_prompt}])
     API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = os.environ["DATAROBOT_API_TOKEN"]
@@ -735,6 +758,7 @@ def mainPage():
                     with st.spinner("Making dictionary..."):
                         dictionary = getDataDictionary(data)
                         st.markdown(dictionary)
+
             except:
                 pass
 
@@ -780,7 +804,7 @@ def mainPage():
                     with st.spinner("Engineering Features... "):
                         # prompt was set above when calling data quality report. Now calling feature engineering
                         attempts = 0
-                        max_retries = 4
+                        max_retries = 5
                         while attempts < max_retries:
                             print(attempts)
                             try:
