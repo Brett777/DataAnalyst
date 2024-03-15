@@ -901,7 +901,7 @@ def mainPage():
                     with st.spinner("Engineering Features... "):
                         # prompt was set above when calling data quality report. Now calling feature engineering
                         attempts = 0
-                        max_retries = 10
+                        max_retries = 15
                         while attempts < max_retries:
                             print("Attempt: " +str(attempts))
                             try:
