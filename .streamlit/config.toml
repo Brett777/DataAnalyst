@@ -1,4 +1,5 @@
 [server]
-maxUploadSize = 200
+maxUploadSize = 400
+maxMessageSize = 400
 [theme]
 base="light"
