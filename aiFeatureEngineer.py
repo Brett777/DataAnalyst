@@ -829,7 +829,7 @@ def mainPage():
                     prompt = "\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df)) + "\n Data Dictionary: \n" + str(dictionary)
                     with st.spinner("Data quality assessment..."):
                         attempts = 0
-                        max_retries = 3
+                        max_retries = 5
                         while attempts < max_retries:
                             try:
                                 dataQualityReportCode, dataQualityReport = executeDataQualityReport(prompt, df)
@@ -854,7 +854,7 @@ def mainPage():
 
 
             with tab2:
-                st.subheader("Before we begin, here are some potential data quality issues to be aware of. We'll be mindful of these as we proceed.")
+                st.subheader("Before we begin, here are some potential data quality issues to be aware of.  We'll consider these when building features.")
                 dataQualityReportSummary = interpretDataQualityReport(dataQualityReport)
                 st.write(dataQualityReportSummary)
                 st.subheader("What is the Target in your machine learning project?")
@@ -868,11 +868,10 @@ def mainPage():
                         attempts = 0
                         max_retries = 5
                         while attempts < max_retries:
-                            print(attempts)
+                            print("Attempt: " +str(attempts))
                             try:
                                 if attempts == 0:
                                     pythonCode, results = executeFeatureEngineeringCode(prompt, df)
-
                                 else:
                                     pythonCode, results = executeFeatureEngineeringCodeReattempt("Function to fix: \n" + str(pythonCode) + "\nERROR MESSAGE: \n" + str(results) + "\nOTHER INFO: \n" + prompt, df)
 
