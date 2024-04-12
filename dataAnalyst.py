@@ -3,6 +3,8 @@ import pandas as pd
 import os
 import streamlit as st
 import time
+from prompt_templates.prompts import SystemPrompts
+
 st.set_page_config(page_title="Data Analyst", layout="wide")
 pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
@@ -109,15 +111,12 @@ def createCharts(prompt, pythonCode, results):
     fig1, fig2 = create_charts(results)
     return fig1, fig2
 def getBusinessAnalysis(prompt):
-    from prompt_templates.prompts import SystemPrompts
     '''
     Given the question, the Python Code, and the Result, retrieve the business analysis and suggestions.
     '''
     # Wait for 2 seconds to avoid rate limit
     time.sleep(2.1)
-    print("====getting business analysis=====")
-    print(prompt)
-    data = pd.DataFrame({"promptText": [SystemPrompts.PREDICTION_EXPLANATION_PROMPT.value + "\n" + prompt]})
+    data = pd.DataFrame({"promptText": [ SystemPrompts.PREDICTION_EXPLANATION_PROMPT.value + "\n" + prompt]})
     API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = os.environ["DATAROBOT_API_TOKEN"]
     DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
@@ -256,8 +255,7 @@ def mainPage():
                                 try:
                                     analysis = getBusinessAnalysis(prompt + str(results))
                                     st.markdown(analysis.replace("$", "\$"))
-                                except Exception as e:
-                                    print(f"something went wrong: {e}")
+                                except:
                                     st.write("I am unable to provide the analysis. Please rephrase the question and try again.")
 
 # Main app
