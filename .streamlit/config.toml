@@ -3,3 +3,4 @@ maxUploadSize = 400
 maxMessageSize = 400
 [theme]
 base="light"
+primaryColor="#418BCA"
