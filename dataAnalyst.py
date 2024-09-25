@@ -44,6 +44,9 @@ if "askButton" not in st.session_state:
 if "clearButton" not in st.session_state:
     st.session_state["clearButton"] = False
 
+if "dictionary" not in st.session_state:
+    st.session_state['dictionary'] = ""
+
 if "dictionary_chunks" not in st.session_state:
     st.session_state['dictionary_chunks'] = ""
 
