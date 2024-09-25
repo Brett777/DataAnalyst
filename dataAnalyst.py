@@ -5,14 +5,23 @@ import requests
 
 import pandas as pd
 import streamlit as st
+import markdown
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+import plotly.io as pio
+import base64
 import snowflake.connector
 from openai import OpenAI
 
 client = OpenAI(api_key=st.secrets.openai_credentials.key)
-st.set_page_config(page_title="AI Data Analyst Demo", page_icon=":sparkles:", layout="wide")
+st.set_page_config(page_title="AI Data Analyst", page_icon=":sparkles:", layout="wide")
+
 pd.set_option('display.max_columns', 500)
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.width', 1000)
+
+# Set to True to use a single OpenAI deployment for all request. False to separate requests to different deployments.
+openAImode = True
 
 # Snowflake connection details
 user = st.secrets.snowflake_credentials.user
@@ -22,17 +31,33 @@ warehouse = st.secrets.snowflake_credentials.warehouse
 database = st.secrets.snowflake_credentials.database
 schema = st.secrets.snowflake_credentials.schema
 
+
 # Session state variables
-if "table_selection_button" not in st.session_state:
+if 'password' not in st.session_state:
+    st.session_state["password"] = password
+
+if 'businessQuestion' not in st.session_state:
+    st.session_state["businessQuestion"] = ""
+
+if "askButton" not in st.session_state:
+    st.session_state["askButton"] = False
+if "clearButton" not in st.session_state:
+    st.session_state["clearButton"] = False
+
+if "dictionary_chunks" not in st.session_state:
+    st.session_state['dictionary_chunks'] = ""
+
+if "this_table_dictionary" not in st.session_state:
+    st.session_state['this_table_dictionary'] = ""
+
+if "llm_generated_Dictionary" not in st.session_state:
+    st.session_state["llm_generated_Dictionary"] = ""
+
+if "snowflake_submit_button" not in st.session_state:
+    st.session_state["snowflake_submit_button"] = False
     st.session_state["table_selection_button"] = False
-    st.session_state["ask_button"] = False
     st.session_state["selectedTables"] = []
-
-if "selectedTables" not in st.session_state:
-    st.session_state['selectedTables'] = []
-
-if "selectedTables" not in st.session_state:
-    st.session_state['selectedCSVFile'] = []
+    st.session_state["selectedCSVFile"] = None
 
 if "csv_selection_button" not in st.session_state:
     st.session_state["csv_selection_button"] = False
@@ -136,47 +161,14 @@ def getSnowflakeTableDescriptions(tables, user, password, account, warehouse, da
 
 @st.cache_data(show_spinner=False)
 def suggestQuestion(description):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": """
-                            <YOUR ROLE>
-                            Your job is to examine some meta data and suggest 3 business analytics questions that might yeild interesting insight from the data.
-                            Inspect the user's metadata and suggest 3 different questions. They might be related, or completely unrelated to one another. 
-                            Your suggested questions might require analysis across multiple tables, or might be confined to 1 table.
-                            Another analyst will turn your question into a SQL query. As such, your suggested question should not require advanced statistics or machine learning to answer and should be straightforward to implement in SQL.
-                            </YOUR ROLE>
-                            
-                            <CONTEXT> 
-                            You will be provided with meta data about some tables in Snowflake.
-                            For each question, consider all of the tables.
-                            </CONTEXT>
-                            
-                            <YOUR RESPONSE>                        
-                            Each question should be 1 or 2 sentences, no more.
-                            Your response should only contain the suggested business questions and nothing else.
-                            Format as a bullet list in markdown.
-                            </YOUR RESPONSE>
-                            
-                            <NECESSARY CONSIDERATIONS>
-                            Do not refer to specific column names or tables in the data. Just use common language when suggesting a question. Let the next analyst figure out which columns and tables they'll need to use. 
-                            </NECESSARY CONSIDERATIONS>
-                                                        
-            """},
-            {"role": "user", "content": description}])
-    print(response.choices[0].message.content)
-    return response.choices[0].message.content
-
-@st.cache_data(show_spinner=False)
-def suggestQuestion2(description):
-    data = pd.DataFrame({"promptText": [description]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    # description = "this is a test."
+    systemPrompt = st.secrets.prompts.suggest_a_question
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [description]})
+    deployment_id = st.secrets.datarobot_deployment_id.summarize_table
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
     DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
-    deployment_id = '665fe95707bf79a3b2e11b44'
+
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -188,45 +180,21 @@ def suggestQuestion2(description):
         data=data.to_json(orient='records'),
         headers=headers
     )
-    code = predictions_response.json()["data"][0]["prediction"]
-    return code
+    suggestion = predictions_response.json()["data"][0]["prediction"]
+    return suggestion
 
 @st.cache_data(show_spinner=False)
 def summarizeTable(dictionary, table):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": f"""
-                            YOUR ROLE:
-                            Your job is to examine some meta data and come up with a brief description of the dataset, 2 - 5 sentences long. 
-                            Inspect the user's metadata and write the description for the table called {table}.
-                            This description will help an analyst better understand a new dataset that they are seeing for the first time.
-                            Suggest what kinds of business analytics questions this data set could be used to help answer.
-                            Describe the business value or analytics value of this data.
-                            Call out anything particularly insightful, interesting or unique about the dataset.
-
-                            CONTEXT: 
-                            You will be provided with meta data about multiple tables in Snowflake, but we only care about 1 of them: {table}                             
-
-                            YOUR RESPONSE:                        
-                            A description of the {table} table 2 or 5 sentences, no more.
-                            Format as markdown.    
-                            Do not include any headers.                        
-            """},
-            {"role": "user", "content": dictionary}])
-    print(response.choices[0].message.content)
-    return response.choices[0].message.content
-
-@st.cache_data(show_spinner=False)
-def summarizeTable2(dictionary, table):
-    data = pd.DataFrame({"promptText": [str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    systemPrompt = st.secrets.prompts.summarize_table
+    systemPrompt = systemPrompt.format(table=table)
+    # table = "This is a test"
+    # dictionary = "this is a test dictionary."
+    data = pd.DataFrame(
+        {"systemPrompt": systemPrompt, "promptText": [str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
+    deployment_id = st.secrets.datarobot_deployment_id.summarize_table
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
     DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
-    deployment_id = '665ff189900bb40d401fcd33'
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -238,112 +206,66 @@ def summarizeTable2(dictionary, table):
         data=data.to_json(orient='records'),
         headers=headers
     )
-    code = predictions_response.json()["data"][0]["prediction"]
-    return code
+    summary = predictions_response.json()["data"][0]["prediction"]
+    return summary
 
 @st.cache_data(show_spinner=False)
 def getDataDictionary(prompt):
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": """
-        <ROLE>
-        You are a data dictionary maker. 
-        Inspect this metadata to decipher what each column in the dataset is about is about. 
-        Write a short description for each column that will help an analyst effectively leverage this data in their analysis.
-        </ROLE>
-        
-        <CONTEXT>
-        You will receive the following:
-        1) The first 10 rows of a dataframe
-        2) A summary of the data computed using pandas .describe()
-        3) For categorical data, a list of the unique values limited to the top 10 most frequent values.
-        </CONTEXT>
-        
-        <CONSIDERATIONS>
-        The description should communicate what any acronyms might mean, what the business value of the data is, and what the analytic value might be. 
-        You must describe ALL of the columns in the dataset to the best of your ability. 
-        Your response should be formatted in markdown as a table or list of all of the columns names, along with your best attempt to describe what the column is about.
-        To format text as a table in Markdown, you can use pipes (|) and dashes (-) to create the structure.
-            
-        Basic example:
-        | Header 1 | Header 2 | Header 3 |
-        |----------|----------|----------|
-        | Row 1, Col 1 | Row 1, Col 2 | Row 1, Col 3 |
-        | Row 2, Col 1 | Row 2, Col 2 | Row 2, Col 3 |
-        | Row 3, Col 1 | Row 3, Col 2 | Row 3, Col 3 | 
-        </CONSIDERATIONS>
-        """},
-            {"role": "user", "content": prompt}])
-    print(response.choices[0].message.content)
-    return response.choices[0].message.content
+    systemPrompt = st.secrets.prompts.get_data_dictionary
+    # prompt = data
+    # prompt = "this is a test. are you there?"
+
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    deployment_id = st.secrets.datarobot_deployment_id.data_dictionary_maker
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    dictionary = predictions_response.json()["data"][0]["prediction"]
+    return dictionary
+
 @st.cache_data(show_spinner=False)
 def assembleDictionaryParts(parts):
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": """
-            <ROLE>
-            You are a data dictionary assembler.          
-            A data dictionary explains to users what the columns of a dataset are about, and how that data could be used for analysis.
-            The user will provide you with a series of mini data dictionaries.
-            Your job is to assemble a final polished data dictionary by combining the mini data dictionaries provided by the user, into 1 single data dictionary.            
-            </ROLE>
+    systemPrompt = st.secrets.prompts.assemble_data_dictionary
+    # parts = data
 
-            <CONTEXT>
-            The user will provide a series of mini data dictionaries, all in roughly the same format. 
-            The format is a table containing: the name of the column and a description of what that column means. 
-            Each mini dictionary will have 5 or fewer entries. 
-            It's possible that you will only be provided with 1 mini dictionary, in which case your job is pretty easy! Just format the data and respond.         
-            </CONTEXT>
-            
-            <YOUR RESPONSE>
-            Respond with a single data dictionary containing all of the entries provided by the user.
-            Avoid duplicate entries.
-            Your response should be formatted as a table in markdown where content is aligned to the left.
-            To format text as a table in Markdown, you can use pipes (|) and dashes (-) to create the structure.
-            
-            Basic example:
-            | Header 1 | Header 2 | Header 3 |
-            |----------|----------|----------|
-            | Row 1, Col 1 | Row 1, Col 2 | Row 1, Col 3 |
-            | Row 2, Col 1 | Row 2, Col 2 | Row 2, Col 3 |
-            | Row 3, Col 1 | Row 3, Col 2 | Row 3, Col 3 |
-
-            You can also align text within the columns using colons :.
-            :--- aligns to the left.
-            :---: aligns to the center.
-            ---: aligns to the right.
-            
-            Example:
-            | Left Align | Center Align | Right Align |
-            |:-----------|:------------:|------------:|
-            | Left       | Center       | Right       |
-            | Left       | Center       | Right       |
-             </YOUR RESPONSE>           
-            """},
-            {"role": "user", "content": str(parts)}])
-    print(response.choices[0].message.content)
-    return response.choices[0].message.content
-
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [parts]})
+    deployment_id = st.secrets.datarobot_deployment_id.data_dictionary_assembler
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    assembled = predictions_response.json()["data"][0]["prediction"]
+    return assembled
 @st.cache_data(show_spinner=False)
-def getDataDictionary2(prompt):
-    '''
-    Submits the data, gets dictionary
-    '''
-    #prompt = data
-
-    data = pd.DataFrame({"promptText": [prompt]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
-    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
-    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
-    deployment_id = '65af61f272721c6041f825db'
+def getPythonCode(prompt):
+    systemPrompt = st.secrets.prompts.get_python_code
+    # prompt = "test"
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    deployment_id = st.secrets.datarobot_deployment_id.python_code_generator
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -356,197 +278,40 @@ def getDataDictionary2(prompt):
         headers=headers
     )
     code = predictions_response.json()["data"][0]["prediction"]
-    return code
-
-def getPythonCode(prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": """
-                <ROLE>                
-                You are a Python Pandas expert
-                Your job is to write Pandas code that retrieves all the data needed to fully explain the answer to the user's business question.                   
-                Carefully inspect the information and metadata provided to ensure your code will execute and return data as a Pandas dataframe.
-                The result dataframe should not only answer the question, but provide the necessary context so the user can fully understand. 
-                For example, if the user asks, "Which State has the highest revenue?" Your query might return the top 10 states by revenue sorted in descending order. 
-                This way the user can analyze the context of the answer. 
-                </ ROLE>
-                
-                <CONTEXT>   
-                The user will provide a data dictionary that tells you the data type of each column.
-                They will provide a small sample of data from each column. Useful for understanding the content of the columns as you build your query.
-                They will also provide a list of frequently occurring values from VARCHAR / categorical columns. This would be helpful to know when adding filters / where clauses in your query.
-                Based on this metadata, build your query so that it will run without error and return some data. 
-                Your query should return not just the facts directly related to the question, but also return related information that could be part of the root cause or provide additional analytics value.
-                Your query will be executed from Python using the Snowflake Python Connector.
-                </CONTEXT>
-                
-                <RESPONSE>
-                Your response shall only contain a Python function called analyze_data() that returns the relevant data as a dataframe                
-                Your code should get any relevant, supporting or contextual information to help the user better understand the results.
-                Try to ensure that your code does not return an empty dataframe.                
-                Your code should be redundant to errors, with a high likelihood of successfully executing. 
-                Your function must not return a dataset that is excessively lengthy, therefore consider appropriate groupbys and aggregations.
-                The resulting dataframe from your function will be analyzed by humans and plotted in charts, so consider appropriate ways to organize and sort the data so that it's easy to interpret
-                The dataframe should have appropriate column names so that it's easy to interpret and easy to plot.                                      
-                Include comments to explain your code.
-                Your response should be formatted as markdown where code is contained within a pattern like:
-                ```python
-                ```                        
-                <FUNCTION REQUIREMENTS>
-                Name: analyze_data()
-                Input: A single pandas dataframe.
-                Output: A single pandas dataframe.
-                Import required libraries within the function.
-                </FUNCTION REQUIREMENTS>         
-                  
-                </RESPONSE>
-                
-                <NECESSARY CONSIDERATIONS>   
-                Carefully consider the metadata and the sample data when constructing your function to avoid errors or an empty result.       
-                For example, seemingly numeric columns might contain non-numeric formatting such as $1,234.91 which could require special handling.
-                When performing date operations on a date column, consider casting that column as a DATE for error redundancy.                
-                Ensure error redundancy by type casting and taking other measure to ensure code executes successfully.
-                </NECESSARY CONSIDERATIONS>
-                
-                <REATTEMPT>
-                If your query fails due to an error or returns an empty result, you will also see the following text in the user's prompt:
-                'QUERY FAILED! Attempt X failed with error: <error>  
-                Take this error message into consideration when building your function so that the problem doesn't happen again.                
-                Try again, but don't fail this time.
-                </REATTEMPT>            """},
-            {"role": "user", "content": prompt}])
-    print(response.choices[0].message.content)
     # Pattern to match code blocks that optionally start with ```python or just ```
     pattern = r'```(?:python)?\n(.*?)```'
-    matches = re.findall(pattern, response.choices[0].message.content, re.DOTALL)
+    matches = re.findall(pattern, code, re.DOTALL)
 
     # Join all matches into a single string, separated by two newlines
     python_code = '\n\n'.join(matches)
     return python_code
-
-def getPythonCode2(prompt):
-    '''
-    Submits the user's prompt to DataRobot, gets Python
-    '''
-
-    data = pd.DataFrame({"promptText": [prompt]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
-    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
-    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
-    deployment_id = '65aedd564840bad380f81455'
-    headers = {
-        'Content-Type': 'application/json; charset=UTF-8',
-        'Authorization': 'Bearer {}'.format(API_KEY),
-        'DataRobot-Key': DATAROBOT_KEY,
-    }
-    url = API_URL.format(deployment_id=deployment_id)
-    predictions_response = requests.post(
-        url,
-        data=data.to_json(orient='records'),
-        headers=headers
-    )
-    code = predictions_response.json()["data"][0]["prediction"]
-    return code
-
+@st.cache_data(show_spinner=False)
 def executePythonCode(prompt, df):
     '''
     Executes the Python Code generated by the LLM
     '''
     print("Generating code...")
     pythonCode = getPythonCode(prompt)
-    print(pythonCode.replace("```python", "").replace("```", ""))
-    pythonCode = pythonCode.replace("```python", "").replace("```", "")
     print("Executing...")
-    function_dict = {}
-    exec(pythonCode, function_dict)  # execute the code created by our LLM
-    analyze_data = function_dict['analyze_data']  # get the function that our code created
-    results = analyze_data(df)
+    try:
+        function_dict = {}
+        exec(pythonCode, function_dict)  # execute the code created by our LLM
+        analyze_data = function_dict['analyze_data']  # get the function that our code created
+        results = analyze_data(df)
+    except Exception as e:
+        print(e)
     return pythonCode, results
+@st.cache_data(show_spinner=False)
 def getSnowflakeSQL(prompt, warehouse=warehouse, database=database, schema=schema):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": f"""
-                <ROLE>                
-                You are a Snowflake SQL query maker.
-                Your job is to write a Snowflake SQL query that retrieves all the data needed to fully explain the answer to the user's business question.                   
-                Carefully inspect the information and metadata provided to ensure your query will execute and return data.
-                The result set should not only answer the question, but provide the necessary context so the user can fully understand. 
-                For example, if the user asks, "Which State has the highest revenue?" Your query might return the top 10 states by revenue sorted in descending order. 
-                This way the user can analyze the context of the answer. 
-                </ ROLE>
-                
-                <CONTEXT>   
-                The user will provide a data dictionary that tells you the data type of each column.
-                They will provide a small sample of data from each column. Useful for understanding the content of the columns as you build your query.
-                They will also provide a list of frequently occurring values from VARCHAR / categorical columns. This would be helpful to know when adding filters / where clauses in your query.
-                Based on this metadata, build your query so that it will run without error and return some data. 
-                Your query should return not just the facts directly related to the question, but also return related information that could be part of the root cause or provide additional analytics value.
-                Your query will be executed from Python using the Snowflake Python Connector.
-                </CONTEXT>
-                
-                <RESPONSE>
-                Your response shall be a single, executable Snowflake SQL query that retrieves the data supporting the answer to the question.
-                In addition, your response should return any relevant, supporting or contextual information to help the user better understand the results.
-                Try to ensure that your query does not return an empty result set.
-                Your code may not include any operations that could alter or corrupt the data in Snowlfake.
-                You may not use DELETE, UPDATE, TRUNCATE, DROP, DML Operations, ALTER TABLE or anything that could permanently alter the data in Snowflake. 
-                Your code should be redundant to errors, with a high likelihood of successfully executing. 
-                The database contains very large transactional tables in excess of 10M rows. Your query result must not be excessively lengthy, therefore consider appropriate groupbys and aggregations.
-                The result of this query will be analyzed by humans and plotted in charts, so consider appropriate ways to organize and sort the data so that it's easy to interpret
-                Do not provide multiple queries that must be executed in different steps - the query must execute in a single step.      
-                Do not include any USE statements.                          
-                Include comments to explain your code.
-                Your response should be formatted as markdown where SQL code is contained within a pattern like:
-                ```sql
-                ```                        
-                SNOWFLAKE ENVIRONMENT:
-                Warehouse: {warehouse}
-                Database: {database}
-                Schema: {schema}             
-                  
-                </RESPONSE>
-                
-                <NECESSARY CONSIDERATIONS>   
-                Carefully consider the metadata and the sample data when constructing your query to avoid errors or an empty result.       
-                For example, seemingly numeric columns might contain non-numeric formatting such as $1,234.91 which could require special handling.
-                When performing date operations on a date column, consider casting that column as a DATE for error redundancy.                 
-                To ensure case sensitivity of column names, use quotes around column names.     
-                This query will be executed using the Snowflake Python Connector. Make sure the query will be compatible with the Snowflake Python Connector. 
-                </NECESSARY CONSIDERATIONS>
-                
-                <REATTEMPT>
-                If your query fails due to a SQL error or returns an empty result set, you will also see the following text in the user's prompt:
-                'QUERY FAILED! Attempt X failed with error: <error> SQL Code: <your failed sql query>.
-                Take this failed SQL code and error message into consideration when building your query so that the problem doesn't happen again.
-                You might see an error message like this: 'NoneType' object has no attribute 'head'
-                This means that the query returned an empty result set.
-                Try again, but don't fail this time.
-                </REATTEMPT>
-               """},
-            {"role": "user", "content": prompt}])
-    print(response.choices[0].message.content)
-    # Pattern to match code blocks that optionally start with ```python or just ```
-    pattern = r'```(?:sql)?\n(.*?)```'
-    matches = re.findall(pattern, response.choices[0].message.content, re.DOTALL)
-
-    # Join all matches into a single string, separated by two newlines
-    sql_code = '\n\n'.join(matches)
-    return sql_code
-
-def getSnowflakeSQL2(prompt, warehouse=warehouse, database=database, schema=schema):
-    data = pd.DataFrame({"promptText": [str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(database) + "\nschema = " + str(schema)]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
+    systemPrompt = st.secrets.prompts.get_snowflake_sql
+    systemPrompt = systemPrompt.format(warehouse=warehouse, database=database, schema=schema)
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
+        str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
+            database) + "\nschema = " + str(schema)]})
+    deployment_id = st.secrets.datarobot_deployment_id.sql_code_generator
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
     DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
-    deployment_id = '66605dbaa435cf5c271fca52'
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -566,11 +331,11 @@ def getSnowflakeSQL2(prompt, warehouse=warehouse, database=database, schema=sche
     # Join all matches into a single string, separated by two newlines
     sql_code = '\n\n'.join(matches)
     return sql_code
-
+@st.cache_data(show_spinner=False)
 def executeSnowflakeQuery(prompt, user, password, account, warehouse, database, schema):
+    # prompt = "Retrieve a random sample using SAMPLE(1000 ROWS) from this table: 'LENDING_CLUB_TARGET'"
     # Get the SQL code
     snowflakeSQL = getSnowflakeSQL(prompt)
-    # snowflakeSQL = getSnowflakeSQL2(prompt)
 
     # Create a connection using Snowflake Connector
     conn = snowflake.connector.connect(
@@ -580,7 +345,8 @@ def executeSnowflakeQuery(prompt, user, password, account, warehouse, database, 
         warehouse=warehouse,
         database=database,
         schema=schema,
-        quote_identifiers=(True, '')
+        # Enable case sensitivity for identifiers
+        case_sensitive_identifier_quoting=True
     )
     results = None
 
@@ -589,13 +355,87 @@ def executeSnowflakeQuery(prompt, user, password, account, warehouse, database, 
         with conn.cursor() as cur:
             cur.execute(snowflakeSQL)
             results = cur.fetch_pandas_all()
-            results.columns = results.columns.str.upper()
+            # results.columns = results.columns.str.upper()
     except snowflake.connector.errors.Error as e:
         print(f"An error occurred: {e}")
     finally:
         conn.close()
 
     return snowflakeSQL, results
+@st.cache_data(show_spinner=False)
+def getSnowflakePython(prompt, warehouse=warehouse, database=database, schema=schema):
+    systemPrompt = st.secrets.prompts.get_snowflake_snowpark
+    systemPrompt = systemPrompt.format(warehouse=warehouse, database=database, schema=schema)
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
+        str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
+            database) + "\nschema = " + str(schema)]})
+    deployment_id = st.secrets.datarobot_deployment_id.sql_code_generator
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    code = predictions_response.json()["data"][0]["prediction"]
+    # Pattern to match code blocks that optionally start with ```python or just ```
+    pattern = r'```(?:python)?\n(.*?)```'
+    matches = re.findall(pattern, code, re.DOTALL)
+
+    # Join all matches into a single string, separated by two newlines
+    snowpark_code = '\n\n'.join(matches)
+    return snowpark_code
+@st.cache_data(show_spinner=False)
+def executeSnowflakeSnowpark(prompt, user, password, account, warehouse, database, schema):
+    from snowflake.snowpark import Session
+    import snowflake.snowpark.functions as F
+
+    # Get the Snowpark Python DataFrame transformation as a string
+    snowflake_df_transform = getSnowflakePython(prompt)
+
+    print("SNOWPARK CODE\n================")
+    print(snowflake_df_transform)
+
+    # Define connection parameters
+    connection_parameters = {
+        "account": account,
+        "user": user,
+        "password": password,
+        "warehouse": warehouse,
+        "database": database,
+        "schema": schema
+    }
+
+    # Create a Snowflake session
+    session = Session.builder.configs(connection_parameters).create()
+    results = None
+
+    try:
+        # Combine the imports and the transform function in one execution block
+        exec(snowflake_df_transform, globals(), locals())
+
+        # Assume the code defines a function called 'transform_df' that takes a session
+        if 'transform_df' in locals():
+            df = locals()['transform_df'](session)
+        else:
+            raise ValueError("The code did not define a 'transform_df' function.")
+
+        # Convert the Snowpark DataFrame to a Pandas DataFrame
+        results = df.to_pandas()
+        results.columns = results.columns.str.upper()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        session.close()
+
+    return snowflake_df_transform, results
 
 @st.cache_data(show_spinner=False)
 def getDataSample(sampleSize):
@@ -603,122 +443,25 @@ def getDataSample(sampleSize):
                       Select a {sampleSize} row random sample using the SAMPLE clause                
                       """
     sampleSQL = getSnowflakeSQL(sampleSQLprompt)
-    # sampleSQL = getSnowflakeSQL2(sampleSQLprompt)
 
-    sql, sample = executeSnowflakeQuery(sampleSQL, user, password, account, warehouse, database, schema)
+    sql, sample = executeSnowflakeQuery(sampleSQL, user, st.session_state["password"], account, warehouse, database,
+                                        schema)
     return sample
-
 @st.cache_data(show_spinner=False)
 def getTableSample(sampleSize, table):
-    sqlCode, results = executeSnowflakeQuery(f"Retrieve a random sample using SAMPLE({sampleSize} ROWS) from this table: " + str(table), user, password, account, warehouse, database, schema)
+    sqlCode, results = executeSnowflakeQuery(
+        f"Retrieve a random sample using SAMPLE({sampleSize} ROWS) from this table: " + str(table), user,
+        password, account, warehouse, database, schema)
     return results
-
+@st.cache_data(show_spinner=False)
 def getChartCode(prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.6,
-        seed=4242,
-        messages=[
-            {"role": "system",
-             "content": """
-            <ROLE>
-            You are a Plotly chart maker. 
-            Your task is to create a function that returns 2 Plotly visualizations of the provided data to help answer a business question.
-            </ROLE>
-            
-            <CONTEXT>
-            You will be given a business question and a pandas dataframe containing information relevant to the question. 
-            </CONTEXT>
-            
-            <YOUR RESPONSE>
-            Your job is to create 2 complementary data visualizations using the Python library Plotly. 
-            Your response must be a Python function that returns 2 plotly.graph_objects.Figure objects.
-            Your function will have an input parameter df, which will be a dataframe just like the one provided in the context here. 
-            Therefore, your function may only make use of data and columns like the data provided in the context here. 
-            </YOUR RESPONSE>
-            
-            <FUNCTION REQUIREMENTS>
-            Name: create_charts()
-            Input: A single pandas dataframe.
-            Output: Two plotly.graph_objects.Figure objects.
-            Import required libraries within the function.
-            </FUNCTION REQUIREMENTS>
-            </YOUR RESPONSE>
-
-            <NECESSARY CONSIDERATIONS>
-            ONLY REFER TO COLUMNS THAT ACTUALLY EXIST IN THE INPUT DATA. 
-            You must never refer to columns that don't exist in the input dataframe.
-            When referring to columns in your code, spell them EXACTLY as they appear in the pandas dataframe - this might be different from how they are referenced in the business question! Only refer to columns that exist IN THE DATAFRAME.
-            For example, if the question asks "What is the total amount paid ("AMTPAID") for each type of order?" but the dataframe does not contain "AMTPAID" but rather "TOTAL_AMTPAID", you should use "TOTAL_AMTPAID" in your code because that's the column name in the data.            
-            Data Availability: If some data is missing, plot what you can in the most sensible way.
-            Package Imports: If your code requires a package to run, such as statsmodels, numpy, scipy, etc, you must import the package within your function.
-            Data Handling:
-            If there are more than 100 rows, consider grouping or aggregating data for clarity.
-            Round values to 2 decimal places if they have more than 2.
-            Visualization Principles:
-            Choose visualizations that effectively display the data and complement each other.
-            Examples:
-            Heatmap and Scatter Plot Matrix
-            Bar chart and Choropleth (if state abbreviations or other required geospatial identifiers are available)
-            Box Plot and Violin Plot
-            Line Chart and Area Chart
-            Scatter Plot and Histogram
-            Bubble Chart and Treemap
-            Time Series Plot and Heatmap            
-            Design Guidelines:
-            Simple, not overly busy or complex.
-            No background colors or themes; use the default theme.
-            Complementary colors you could use: #0B0A0D, #243E73, #1D3159, #8BB4D9, #A67E6F, #011826, #1A3940, #8C5946, #BF8D7A, #0D0D0D, #3805F2, #2703A6, #150259, #63A1F2, #84F266, #232625, #35403A, #4C594F, #A4A69C, #BFBFB8
-            Gradient - Coral to Teal: #FF5F5D, #F76F67, #EE8071, #E6907C, #DD9F86, #D5AF90, #CDBF9A, #C4CFA4, #BCD0AF, #A3CCAB, #8BB8A7, #72A4A3, #59809F, #3F7C85
-            Gradient - Teal to Aqua: #3F7C85, #367B88, #2D7A8A, #24798D, #1B7890, #117893, #087796, #007699, #00759C, #00749F, #0074A2, #0073A5, #0072A7, #00CCBF
-            Gradient - Dark Teal to Light Gray: #14140F,#23231E,#32312D,#41403C,#51504B,#60605A,#707069,#808078,#909087,#A0A096,#B0B0A5,#C0C0B4,#D0D0C3,#CACACA
-            Gradient - Ocean Blues: #003840,#00424A,#004C55,#00565F,#006069,#006A73,#00747C,#007E86,#008891,#00929B,#009CA5,#00A6AF,#00B0B9,#00BBC9
-            Include titles, axis names, and legends.
-            Robustness:
-            Ensure the function is free of syntax errors and logical problems.
-            Handle errors gracefully and ensure type casting for data integrity.
-            Formatting:
-            Provide the function in the following markdown format:
-            ```python
-            ``` 
-
-            <EXAMPLE CODE STRUCTURE>
-            ```python
-            def create_charts(df):
-                import pandas as pd
-                import plotly.graph_objects as go
-                from plotly.subplots import make_subplots
-                # Other packages you might need
-                
-                # Your code to create charts here
-
-                return fig1, fig2
-            ```                     
-            <EXAMPLE CODE STRUCTURE>
-            
-            <REATTEMPT>
-            If your chart code fails to execute, you will also see the following text in the user's prompt:
-            'CHART CODE FAILED!  Attempt X failed with error: ..."
-            Take error message into consideration when reattempting your chart code so that the problem doesn't happen again.                     
-            Try again, but don't fail this time.      
-            </REATTEMPT>
-            </NECESSARY CONSIDERATIONS>
-            """},
-            {"role": "user", "content": prompt}])
-    # Pattern to match code blocks that optionally start with ```python or just ```
-    pattern = r'```(?:python)?\n(.*?)```'
-    matches = re.findall(pattern, response.choices[0].message.content, re.DOTALL)
-
-    # Join all matches into a single string, separated by two newlines
-    python_code = '\n\n'.join(matches)
-    return python_code
-
-def getChartCode2(prompt):
-    data = pd.DataFrame({"promptText": [prompt]})
-    API_URL = 'https://cfds-ccm-prod.orm.datarobot.com/predApi/v1.0/deployments/{deployment_id}/predictions'
-    API_KEY = os.environ["DATAROBOT_API_TOKEN"]
-    DATAROBOT_KEY = os.environ["DATAROBOT_KEY"]
-    deployment_id = '666066752932056db1e10e34'
+    systemPrompt = st.secrets.prompts.get_chart_code
+    # prompt = "test"
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    deployment_id = st.secrets.datarobot_deployment_id.plotly_code_generator
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
     headers = {
         'Content-Type': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer {}'.format(API_KEY),
@@ -738,10 +481,10 @@ def getChartCode2(prompt):
     # Join all matches into a single string, separated by two newlines
     chart_code = '\n\n'.join(matches)
     return chart_code
+@st.cache_data(show_spinner=False)
 def createCharts(prompt, results):
     print("getting chart code...")
     chartCode = getChartCode(prompt + str(results))
-    # chartCode = getChartCode2(prompt + str(results))
     print(chartCode.replace("```python", "").replace("```", ""))
     function_dict = {}
     exec(chartCode.replace("```python", "").replace("```", ""), function_dict)  # execute the code created by our LLM
@@ -749,43 +492,27 @@ def createCharts(prompt, results):
     create_charts = function_dict['create_charts']  # get the function that our code created
     fig1, fig2 = create_charts(results)
     return fig1, fig2
-
+@st.cache_data(show_spinner=False)
 def getBusinessAnalysis(prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.7,
-        seed=42,
-        messages=[
-            {"role": "system",
-             "content": """
-            ROLE:
-            You are a business analyst.
-            Your job is to write an answer to the user's question in 3 sections (heading level 3): The Bottom Line, Additional Insights, Follow Up Questions.
-
-            CONTEXT:
-            The user has asked a business question and we have represented it as a SQL query.
-            We have also executed that query and retrieved the results.
-            You will be provided with the user's question, the sql query and the resulting data from that query.
-
-            YOUR RESPONSE:            
-            Your response must be formatted as Markdown and include 3 sections (heading level 3): The Bottom Line, Additional Insights, Follow Up Questions.
-
-            The Bottom Line
-            Based on the context information provided, clearly and succinctly answer the user's question in plain language, tailored for someone with a business background rather than a technical one.
-
-            Additional Insights
-            This section is all about the "why". Discuss the underlying reasons or causes for the answer in "The Bottom Line" section. This section, while still business focused, should go a level deeper to help the user understand a possible root cause. Where possible, justify your answer using data or information from the dataset.
-            Provide business advice based on the outcome noted in "The Bottom Line" section. 
-            Suggest specific additional analyses based on the context of the question and the data available in the Table Definition. 
-            Offer actionable recommendations. For example, if the data shows a declining trend in TOTAL_PROFIT, advise on potential areas to investigate using other data in the dataset, and propose analytics strategies to gain insights that might improve profitability. 
-
-            Follow Up Questions
-            Offer 2 or 3 follow up questions the user could ask to get deeper insight into the issue in another round of question and answer. When you word these questions, do not use pronouns to refer to the data - always use specific column names. Only refer to data that actually exists in the dataset. For example, don't refer to "sales volume" if there is no "sales volume" column.
-            """},
-            {"role": "user", "content": prompt}])
-    print(response.choices[0].message.content)
-    return response.choices[0].message.content
-
+    systemPrompt = st.secrets.prompts.get_business_analysis
+    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    deployment_id = st.secrets.datarobot_deployment_id.business_analysis
+    API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
+    API_KEY = st.secrets.datarobot_credentials.API_KEY
+    DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer {}'.format(API_KEY),
+        'DataRobot-Key': DATAROBOT_KEY,
+    }
+    url = API_URL.format(deployment_id=deployment_id)
+    predictions_response = requests.post(
+        url,
+        data=data.to_json(orient='records'),
+        headers=headers
+    )
+    business_analysis = predictions_response.json()["data"][0]["prediction"]
+    return business_analysis
 @st.cache_data(show_spinner=False)
 def get_top_frequent_values(df):
     # Select non-numeric columns
@@ -810,9 +537,11 @@ def get_top_frequent_values(df):
 
     return result_df
 
+# Function that creates the charts and business analysis
+@st.cache_data(show_spinner=False)
 def createChartsAndBusinessAnalysis(businessQuestion, results, prompt):
     attempt_count = 0
-    max_attempts = 4
+    max_attempts = 6
     fig1 = fig2 = None
     analysis = None
 
@@ -847,6 +576,172 @@ def createChartsAndBusinessAnalysis(businessQuestion, results, prompt):
                 st.markdown(analysis.replace("$", "\$"))
         except:
             st.write("I am unable to provide the analysis. Please rephrase the question and try again.")
+
+    return fig1, fig2, analysis
+
+# Function to create a download link
+@st.cache_data(show_spinner=False)
+def create_download_link(html_content, filename):
+    b64 = base64.b64encode(html_content.encode()).decode()  # B64 encode
+    href = f'<a href="data:text/html;base64,{b64}" download="{filename}">Download this report</a>'
+    return href
+
+@st.cache_data(show_spinner=False)
+def read_svg(file_path):
+    with open(file_path, 'r') as file:
+        return file.read()
+@st.cache_data(show_spinner=False)
+def read_svg_as_base64(file_path):
+    with open(file_path, 'rb') as file:
+        return base64.b64encode(file.read()).decode('utf-8')
+
+# Callback function to generate HTML content
+@st.cache_data(show_spinner=False)
+def generate_html_report(businessQuestion, sqlcode, results, fig1, fig2, analysis, datarobot_logo_svg, customer_logo_svg):
+    plotly_html1 = pio.to_html(fig1, full_html=False, include_plotlyjs=True, default_width="100%",
+                               default_height="100%")
+    plotly_html2 = pio.to_html(fig2, full_html=False, include_plotlyjs=True, default_width="100%",
+                               default_height="100%")
+
+    # Convert markdown to HTML for the analysis section
+    if analysis and analysis.strip():
+        analysis_html = markdown.markdown(analysis)
+    else:
+        st.error("No analysis data found to generate the report.")
+
+    html_content = f"""
+    <html>
+    <head>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap">
+        <style>
+            body {{
+                font-family: 'IBM Plex Sans', sans-serif;
+                background-color: #F0F1F2;
+                color: #0D0D0D;
+                margin: 40px;
+            }}
+            h1, h2 {{
+                font-family: 'IBM Plex Sans', sans-serif;
+                color: #0D0D0D;
+            }}
+            pre, code {{
+                font-family: 'IBM Plex Mono', monospace;
+            }}
+            .report-title {{
+                font-size: 2.5em;
+                font-weight: bold;
+                text-align: left;
+                margin-top: 40px;
+            }}
+            .section-title {{
+                font-size: 1.75em;
+                font-weight: bold;
+                margin-top: 20px;
+            }}
+            .logo-container {{
+                text-align: left;
+                margin-bottom: 20px;
+            }}
+            .logo-datarobot {{
+                width: 300px;
+                margin-bottom: 10px;
+                display: block;
+            }}
+            .logo-customer {{
+                width: 300px;
+                margin-bottom: 10px;
+                display: block;
+            }}
+            .horizontal-rule {{
+                border: 0;
+                height: 2px;
+                background: #03A688;
+                margin: 20px 0;
+            }}
+            .collapsible {{
+                background-color: #03A688;
+                color: white;
+                cursor: pointer;
+                padding: 10px;
+                width: 100%;
+                border: none;
+                text-align: left;
+                outline: none;
+                font-size: 18px;
+                font-weight: bold;
+            }}
+            .collapsible:after {{
+                content: '+';
+                font-size: 18px;
+                float: right;
+            }}
+            .collapsible.active:after {{
+                content: '-';
+            }}
+            .content {{
+                padding: 0 18px;
+                display: none;
+                overflow: hidden;
+                background-color: #f9f9f9;
+            }}
+            .content.show {{
+                display: block;
+            }}
+        </style>
+        <title>AI Data Analyst Report</title>
+    </head>
+    <body>
+        <div class="logo-container">            
+            <img src="data:image/svg+xml;base64,{datarobot_logo_svg}" class="logo-customer" alt="Customer Logo">
+        </div>
+        <h1 class="report-title">AI Data Analyst Report</h1>
+        <hr class="horizontal-rule">
+        <button type="button" class="collapsible active">Business Question</button>
+        <div class="content show">
+            <p>{businessQuestion}</p>
+        </div>
+        <hr class="horizontal-rule">
+        <button type="button" class="collapsible">Analysis Code</button>
+        <div class="content">
+            <pre>{sqlcode}</pre>
+        </div>
+        <hr class="horizontal-rule">
+        <button type="button" class="collapsible">Results</button>
+        <div class="content">
+            {results.to_html(index=False, escape=False)}
+        </div>
+        <hr class="horizontal-rule">
+        <button type="button" class="collapsible active">Charts</button>
+        <div class="content show">
+            <div>{plotly_html1}</div>
+            <div>{plotly_html2}</div>
+        </div>
+        <hr class="horizontal-rule">
+        <button type="button" class="collapsible active">Business Analysis</button>
+        <div class="content show">
+            <div>{analysis_html}</div>
+        </div>
+        <script>
+            var coll = document.getElementsByClassName("collapsible");
+            for (var i = 0; i < coll.length; i++) {{
+                coll[i].addEventListener("click", function() {{
+                    this.classList.toggle("active");
+                    var content = this.nextElementSibling;
+                    if (content.style.display === "block" || content.classList.contains("show")) {{
+                        content.style.display = "none";
+                        content.classList.remove("show");
+                    }} else {{
+                        content.style.display = "block";
+                        content.classList.add("show");
+                    }}
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return html_content
+
 @st.cache_data(show_spinner=False)
 def process_tables(dictionary, selectedTables, sampleSize):
     tableSamples = []
@@ -854,7 +749,6 @@ def process_tables(dictionary, selectedTables, sampleSize):
     frequentValues = pd.DataFrame()
 
     for table in selectedTables:
-        # tableDescription = summarizeTable2(dictionary, table)
         tableDescription = summarizeTable(dictionary, table)
         results = getTableSample(sampleSize=sampleSize, table=table)
         tableSamples.append(results)
@@ -868,6 +762,7 @@ def process_tables(dictionary, selectedTables, sampleSize):
         smallTableSamples.append(smallSample)
 
     return tableDescriptions, tableSamples, smallTableSamples, frequentValues
+
 @st.cache_data(show_spinner=False)
 def getSnowflakeTables(user, password, account, database, schema, warehouse):
     # Establish the connection
@@ -877,12 +772,17 @@ def getSnowflakeTables(user, password, account, database, schema, warehouse):
         account=account,
         warehouse=warehouse,
         database=database,
-        schema=schema
+        schema=schema,
+        # Enable case sensitivity for identifiers
+        case_sensitive_identifier_quoting=True
     )
 
     try:
         # Create a cursor object
         cursor = conn.cursor()
+
+        # Set the warehouse
+        cursor.execute(f"USE WAREHOUSE {warehouse}")
 
         # Execute a query to fetch the table names
         cursor.execute(f"""
@@ -902,232 +802,350 @@ def getSnowflakeTables(user, password, account, database, schema, warehouse):
         cursor.close()
         conn.close()
 
+# callback functions for the ask button / clear text button
+def text_input_enterKey():
+    st.session_state["askButton"] = True
+
+def clear_text():
+    st.session_state["businessQuestion"] = ""
+    st.session_state["askButton"] = False
+
+def make_dictionary_chunks(df):
+    dictionary_chunks = []
+    chunk_size = 15
+    total_columns = len(df.columns)
+    progress_placeholder = st.empty()
+
+    for start in range(0, total_columns, chunk_size):
+        current_chunk = start // chunk_size + 1
+        total_chunks = (total_columns + chunk_size - 1) // chunk_size
+        progress = current_chunk / total_chunks
+
+        with progress_placeholder.container():
+            st.progress(progress,
+                        text=f'Processing {chunk_size} columns at a time in chunks. Currently working on chunk {current_chunk} of {total_chunks}')
+
+        end = min(start + chunk_size, total_columns)
+        subset = df.iloc[:10, start:end]
+        data = "First 10 Rows: \n" + str(
+            subset) + "\n Unique and Frequent Values of Categorical Data: \n" + str(
+            get_top_frequent_values(df))
+
+        dictionary_chunk = getDataDictionary(data)
+        dictionary_chunks.append(dictionary_chunk)
+
+    progress_placeholder.empty()
+    return dictionary_chunks
+
+def render_header():
+    st.image("DataRobotLogo.svg", width=300)
+    # st.image("small_square_placeholder.svg", width=300)
+    st.title("Ask a question about the data.")
+
+def setup_sidebar():
+    with st.sidebar:
+        st.image("Snowflake.svg", width=75)
+        load_snowflake_tables()
+
+        with st.form(key='table_selection_form'):
+            st.session_state['selectedTables'] = st.multiselect(
+                label="Choose a few tables", options=st.session_state["tables"], key="table_select_box")
+            st.session_state["snowflake_submit_button"] = st.form_submit_button(label='Analyze', type="secondary")
+        process_table_selection()
+
+        st.image("csv_File_Logo.svg", width=45)
+        st.session_state["csvUploadButton"] = st.file_uploader(label="Or, upload a CSV file",
+                                                               accept_multiple_files=False)
+        process_csv_upload()
+
+def load_snowflake_tables():
+    try:
+        st.session_state["tables"] = getSnowflakeTables(
+            user, st.session_state["password"], account, database, schema, warehouse)
+    except Exception as e:
+        print("Error connecting: ", e)
+        st.session_state["tables"] = ["None"]
+
+def process_table_selection():
+    if st.session_state["snowflake_submit_button"]:
+        st.session_state["table_selection_button"] = True
+
+def process_csv_upload():
+    if st.session_state["csvUploadButton"] is not None:
+        st.session_state["selectedCSVFile"] = st.session_state["csvUploadButton"]
+
+def display_logo_header():
+    st.image("DataRobotLogo.svg", width=300)
+    # st.image("small_square_placeholder.svg", width=300)
+    st.header("Ask a question about the data.")
+
+def get_data_definitions_and_suggestions():
+    with st.spinner("Getting table definitions..."):
+        dictionary = getSnowflakeTableDescriptions(
+            st.session_state['selectedTables'], user,
+            st.session_state["password"], account,
+            warehouse, database, schema)
+
+        suggestedQuestions = suggestQuestion(dictionary)
+        table_descriptions, table_samples, small_table_samples, frequent_values = process_tables(
+            dictionary,
+            st.session_state['selectedTables'],
+            sampleSize=1000)
+        st.session_state.update({
+            "tableDescriptions": table_descriptions,
+            "tableSamples": table_samples,
+            "smallTableSamples": small_table_samples,
+            "frequentValues": frequent_values,
+        })
+    return dictionary, suggestedQuestions
+
+def display_analysis_tab(tab):
+    with tab:
+        st.write(st.session_state["suggestedQuestions"])
+
+        st.session_state["businessQuestion"] = st.text_input(
+            label="Question",
+            value=st.session_state["businessQuestion"],
+            on_change=text_input_enterKey
+        )
+        display_action_buttons()
+
+        if st.session_state.get("askButton", False):
+            analyze_question()
+
+def display_explore_tab(tab):
+    with tab:
+        for i in range(len(st.session_state["tableSamples"])):
+            st.subheader(st.session_state['selectedTables'][i])
+            st.caption(f"Displaying a random sample of {len(st.session_state['tableSamples'][i])} rows")
+            st.write(st.session_state["tableDescriptions"][i])
+            st.write(st.session_state["tableSamples"][i])
+            display_data_dictionary(i)
+
+
+def display_data_dictionary(index):
+    table_name = st.session_state['selectedTables'][index]
+    dictionary_key = f'{table_name}_dictionary'
+
+    if dictionary_key not in st.session_state:
+        with st.expander(label=f"Data Dictionary for {table_name}", expanded=False):
+            with st.spinner("Making dictionary..."):
+                dictionary_chunks = make_dictionary_chunks(st.session_state["tableSamples"][index])
+            with st.spinner("Putting it all together..."):
+                assembled_dictionary = assembleDictionaryParts(dictionary_chunks)
+                st.session_state[dictionary_key] = assembled_dictionary
+
+                # Initialize or append to llm_generated_dictionary
+                if 'llm_generated_dictionary' not in st.session_state:
+                    st.session_state['llm_generated_dictionary'] = assembled_dictionary
+                else:
+                    st.session_state['llm_generated_dictionary'] += "\n" + assembled_dictionary
+
+                st.markdown(assembled_dictionary)
+    else:
+        with st.expander(label=f"Data Dictionary for {table_name}", expanded=False):
+            st.markdown(st.session_state[dictionary_key])
+
+def display_csv_explore_tab(tab):
+    with tab:
+        st.session_state["df"] = pd.read_csv(st.session_state["selectedCSVFile"])
+        with st.expander(label="First 10 Rows", expanded=False):
+            st.dataframe(st.session_state["df"].head(10))
+
+        try:
+            with st.expander(label="Column Descriptions", expanded=False):
+                st.dataframe(st.session_state["df"].describe(include='all'))
+        except:
+            pass
+
+        try:
+            with st.expander(label="Unique and Frequent Values", expanded=False):
+                st.dataframe(get_top_frequent_values(st.session_state["df"]))
+        except Exception as e:
+            print(e)
+
+        try:
+            with st.expander(label="Data Dictionary", expanded=True):
+                with st.spinner("Making dictionary..."):
+                    st.session_state['dictionary_chunks'] = make_dictionary_chunks(st.session_state["df"])
+                with st.spinner("Putting it all together..."):
+                    st.session_state["dictionary"] = assembleDictionaryParts(st.session_state['dictionary_chunks'])
+                    st.markdown(st.session_state["dictionary"])
+        except:
+            pass
+
+def display_csv_analysis_tab(tab):
+    with tab:
+        st.session_state["suggestedQuestions"] = suggestQuestion(st.session_state["dictionary"])
+        st.write(st.session_state["suggestedQuestions"])
+
+        st.session_state["businessQuestion"] = st.text_input(
+            label="Question",
+            value=st.session_state["businessQuestion"],
+            on_change=text_input_enterKey
+        )
+        display_action_buttons()
+
+        if st.session_state.get("askButton", False):
+            analyze_question_csv()
+
+def display_action_buttons():
+    buttonContainer = st.container()
+    buttonCol1, buttonCol2, _ = buttonContainer.columns([1, 1, 8])
+
+    buttonCol1.button(label="Ask", use_container_width=True, type="primary", on_click=text_input_enterKey)
+    buttonCol2.button(label="clear", use_container_width=True, type="secondary", on_click=clear_text)
+
+def analyze_question():
+    with st.spinner("Analyzing... "):
+        full_dictionary = []
+        st.session_state["prompt"] = generate_prompt()
+        execute_query_with_retries(csv_mode=False)
+
+        try:
+            display_query_results()
+        except:
+            st.write(
+                "I tried a few different ways, but couldn't get a working solution. Rephrase the question and try again.")
+
+        if st.session_state["results"] is not None and not st.session_state["results"].empty:
+            analyze_and_generate_report(full_dictionary)
+        else:
+            st.write("The query returns an empty result. Try rephrasing the question.")
+            print("No data returned.")
+            st.stop()
+
+def analyze_question_csv():
+    with st.spinner("Analyzing... "):
+        st.session_state["prompt"] = generate_csv_prompt()
+        execute_query_with_retries(csv_mode=True)
+
+        try:
+            display_query_results()
+        except:
+            st.write(
+                "I tried a few different ways, but couldn't get a working solution. Rephrase the question and try again.")
+
+        if st.session_state["results"] is not None and not st.session_state["results"].empty:
+            analyze_and_generate_report_csv()
+        else:
+            st.write("The query returns an empty result. Try rephrasing the question.")
+            print("No data returned.")
+            st.stop()
+
+
+def generate_prompt():
+    # Ensure the llm_generated_dictionary is not None or empty
+    full_dictionary = st.session_state.get('llm_generated_dictionary', '')
+
+    # Build the prompt
+    prompt = (
+        f"Business Question: {st.session_state.get('businessQuestion', '')}\n"
+        f"Data Dictionary: \n{full_dictionary}\n"
+        f"Column Definitions: \n{st.session_state.get('tableDescriptions', '')}\n"
+        f"Data Sample: \n{st.session_state.get('smallTableSamples', '')}\n"
+        f"Frequent Values: \n{st.session_state.get('frequentValues', '')}"
+    )
+
+    # Debugging output
+    print("\n ================= \n PROMPT \n =================")
+    print(prompt)
+
+    return prompt
+
+def generate_csv_prompt():
+    return ("Business Question: " + str(st.session_state["businessQuestion"]) +
+            "\n Data Sample: \n" + str(st.session_state["df"].head(3)) +
+            "\n Unique and Frequent Values of Categorical Data: \n" + str(
+                get_top_frequent_values(st.session_state["df"])) +
+            "\n Data Dictionary: \n" + str(st.session_state["dictionary"]))
+
+def execute_query_with_retries(csv_mode):
+    attempts = 0
+    max_retries = 5
+    while attempts < max_retries:
+        st.session_state["sqlCode"] = None
+        try:
+            if csv_mode:
+                st.session_state["sqlCode"], st.session_state["results"] = executePythonCode(st.session_state["prompt"], st.session_state["df"])
+            else:
+                st.session_state["sqlCode"], st.session_state["results"] = executeSnowflakeQuery(st.session_state["prompt"], user, st.session_state["password"], account, warehouse, database, schema)
+                # st.session_state["sqlCode"], st.session_state["results"] = executeSnowflakeSnowpark(st.session_state["prompt"], user, st.session_state["password"], account, warehouse, database, schema)
+            if st.session_state["results"].empty:
+                raise ValueError("The DataFrame is empty, retrying...")
+            break
+        except Exception as e:
+            attempts += 1
+            st.session_state[
+                "prompt"] += f"\nQUERY FAILED! Attempt {attempts} failed with error: {repr(e)}\nCode: {st.session_state['sqlCode']}"
+            if attempts == max_retries:
+                break
+
+def display_query_results():
+    with st.expander(label="Code", expanded=False):
+        st.code(st.session_state["sqlCode"], language="sql")
+    with st.expander(label="Result", expanded=True):
+        st.table(st.session_state["results"])
+
+def analyze_and_generate_report(full_dictionary):
+    with st.spinner("Visualization and analysis in progress..."):
+        st.session_state["fig1"], st.session_state["fig2"], st.session_state[
+            "analysis"] = createChartsAndBusinessAnalysis(
+            st.session_state["businessQuestion"],
+            st.session_state["results"], st.session_state["prompt"])
+
+    generate_report(full_dictionary)
+
+def analyze_and_generate_report_csv():
+    with st.spinner("Visualization and analysis in progress..."):
+        st.session_state["fig1"], st.session_state["fig2"], st.session_state[
+            "analysis"] = createChartsAndBusinessAnalysis(
+            st.session_state["businessQuestion"],
+            st.session_state["results"], st.session_state["prompt"])
+
+    generate_report_csv()
+
+def generate_report(full_dictionary):
+    read_svgs_and_generate_html_report()
+    create_and_display_download_link()
+
+def generate_report_csv():
+    read_svgs_and_generate_html_report()
+    create_and_display_download_link()
+
+def read_svgs_and_generate_html_report():
+    st.session_state["datarobot_logo_svg"] = read_svg_as_base64("DataRobotLogo.svg")
+    st.session_state["customer_logo_svg"] = read_svg_as_base64("small_square_placeholder.svg")
+
+    st.session_state["html_content"] = generate_html_report(st.session_state["businessQuestion"],
+                                                            st.session_state["sqlCode"],
+                                                            st.session_state["results"], st.session_state["fig1"],
+                                                            st.session_state["fig2"],
+                                                            st.session_state["analysis"],
+                                                            st.session_state["datarobot_logo_svg"],
+                                                            st.session_state["customer_logo_svg"])
+
+def create_and_display_download_link():
+    st.session_state["download_link"] = create_download_link(st.session_state["html_content"], 'report.html')
+    st.markdown(st.session_state["download_link"], unsafe_allow_html=True)
+
 def mainPage():
-    st.image("DataRobot Logo.svg", width=300)
+    setup_sidebar()
 
-    tab1, tab2 = st.tabs(["Analyze", "Explore"])
-    with tab1:
-        st.title("Ask a question about the data.")
+    display_logo_header()
 
-        tables = getSnowflakeTables(user, password, account, database, schema, warehouse)
+    if st.session_state["table_selection_button"] or st.session_state["selectedCSVFile"]:
+        tab1, tab2 = st.tabs(["Analyze", "Explore"])
+        if st.session_state.get("table_selection_button", False):
+            st.session_state["dictionary"], st.session_state["suggestedQuestions"] = get_data_definitions_and_suggestions()
+            with st.spinner(text="Analyzing table structure, see Explore tab for details..."):
+                display_explore_tab(tab2)
+            display_analysis_tab(tab1)
 
-        with st.sidebar:
-            st.image("Snowflake.svg", width=75)
-            with st.form(key='table_selection_form'):
-                # selectedTables = ['LENDING_CLUB_PROFILE', 'LENDING_CLUB_TRANSACTIONS', 'LENDING_CLUB_TARGET']
-                # selectedTables = ['STOP']
-                selectedTables = st.multiselect(label="Choose a few tables", options=tables, key="table_select_box")
-                snowflake_submit_button = st.form_submit_button(label='Analyze', type="secondary")
-            if snowflake_submit_button:
-                st.session_state['selectedTables'] = selectedTables
-                st.session_state["table_selection_button"] = True
-
-            #CSV Uploader
-            st.image("csv_File_Logo.svg", width=35)
-            csvFile = st.file_uploader(label="Or, upload a CSV file", accept_multiple_files=False)
-
-
-
-        if st.session_state["table_selection_button"]:
-            with st.spinner("Getting table definitions..."):
-                dictionary = getSnowflakeTableDescriptions(st.session_state['selectedTables'], user, password, account, warehouse, database, schema)
-                print(dictionary)
-                # suggestedQuestions = suggestQuestion2(dictionary)
-                suggestedQuestions = suggestQuestion(dictionary)
-                print(suggestedQuestions)
-                tableDescriptions, tableSamples, smallTableSamples, frequentValues = process_tables(dictionary,st.session_state['selectedTables'], sampleSize=1000)
-                with tab2:
-                    for i in range(0, len(tableSamples)):
-                        st.subheader(st.session_state['selectedTables'][i])
-                        st.caption("Displaying a random sample " + str(len(tableSamples[i])) + " rows")
-                        st.write(tableDescriptions[i])
-                        st.write(tableSamples[i])
-            st.write(suggestedQuestions)
-
-            # Initialize businessQuestion session state variable
-            if 'businessQuestion' not in st.session_state:
-                st.session_state["businessQuestion"] = ""
-
-            # Function to clear text input
-            def clear_text():
-                st.session_state["businessQuestion"] = ""
-
-            # st.session_state["businessQuestion"] = "How many customers from California had a bad loan?"
-            st.session_state["businessQuestion"] = st.text_input(label="Question", value=st.session_state["businessQuestion"])
-
-            # button columns
-            buttonContainer = st.container()
-            buttonCol1, buttonCol2, empty = buttonContainer.columns([1, 1, 8])
-            submitQuestion = buttonCol1.button(label="Ask", use_container_width=True, type="primary")
-            clearButton = buttonCol2.button(label="clear", use_container_width=True, type="secondary", on_click=clear_text)
-            if submitQuestion:
-                with st.spinner("Analyzing... "):
-                    print("------------")
-                    print(st.session_state["businessQuestion"])
-                    print("------------")
-                    prompt = "Business Question: " + str(st.session_state["businessQuestion"]) + str("\n Data Dictionary: \n") + str(dictionary) + str("\n Data Sample: \n") + str(smallTableSamples) + str("\n Frequent Values: \n") + str(frequentValues)
-                    print(prompt)
-                    print("------------")
-
-                    attempts = 0
-                    max_retries = 5
-                    while attempts < max_retries:
-                        print("Generating code to get the answer. Attempt: " + str(attempts))
-                        sqlCode = None
-                        try:
-                            sqlCode, results = executeSnowflakeQuery(prompt, user, password, account, warehouse,database, schema)
-                            print("Query Result:")
-                            print(sqlCode)
-                            print(results.head(3))
-                            if results.empty: raise ValueError("The DataFrame is empty, retrying...")
-                            break  # If the function succeeds, exit the loop
-                        except Exception as e:
-                            attempts += 1
-                            print(f"Query attempt {attempts} failed with error: {repr(e)}")
-                            sqlCode_str = str(sqlCode) if sqlCode is not None else "None"
-                            prompt += f"\nQUERY FAILED! Attempt {attempts} failed with error: {repr(e)}\nSQL Code: {sqlCode_str}"
-                            if attempts == max_retries:
-                                print("Max retries reached.")
-                                break
-
-
-                    try:
-                        with st.expander(label="Code", expanded=False):
-                            st.code(sqlCode, language="sql")
-                        with st.expander(label="Result", expanded=True):
-                            st.table(results)
-                    except:
-                        st.write(
-                            "I tried a few different ways, but couldn't get a working solution. Rephrase the question and try again.")
-
-                with st.spinner("Visualization and analysis in progress..."):
-                    createChartsAndBusinessAnalysis(st.session_state["businessQuestion"], results, prompt)
-        elif csvFile is not None:
-            with tab1:
-                with st.spinner("Processing data, see Explore tab for details..."):
-                    with tab2:
-                        # df = pd.read_csv(r"C:\Users\BrettOlmstead\PycharmProjects\DataAnalyst - Snowflake\DataAnalystGPT4oCustomAppSnowflakeDemo\DR_Demo_Employee_Attrition.csv")
-                        df = pd.read_csv(csvFile)
-                        # Display the dataframe
-                        with st.expander(label="First 10 Rows", expanded=False):
-                            st.dataframe(df.head(10))
-
-                        try:
-                            with st.expander(label="Column Descriptions", expanded=False):
-                                st.dataframe(df.describe(include='all'))
-                        except:
-                            pass
-
-                        try:
-                            with st.expander(label="Unique and Frequent Values", expanded=False):
-                                st.dataframe(get_top_frequent_values(df))
-                        except Exception as e:
-                            print(e)
-
-                        try:
-                            with st.expander(label="Data Dictionary", expanded=True):
-                                with st.spinner("Making dictionary..."):
-                                    # Initialize an empty list to hold the markdown strings
-                                    dictionary_chunks = []
-                                    # Define the chunk size
-                                    chunk_size = 10
-                                    total_columns = len(df.columns)
-
-                                    # Initialize the progress bar
-                                    progress_placeholder = st.empty()  # Placeholder for the progress bar
-
-                                    for start in range(0, total_columns, chunk_size):
-                                        # Update the progress bar and text
-                                        current_chunk = start // chunk_size + 1
-                                        total_chunks = (total_columns + chunk_size - 1) // chunk_size
-                                        progress = current_chunk / total_chunks
-
-                                        with progress_placeholder.container():
-                                            st.progress(progress,
-                                                        text=f'Processing {chunk_size} columns at a time in chunks. Currently working on chunk {current_chunk} of {total_chunks}')
-
-                                        # Select the subset of columns
-                                        end = min(start + chunk_size, total_columns)
-                                        subset = df.iloc[:10, start:end]
-                                        data = "First 10 Rows: \n" + str(
-                                            subset) + "\n Unique and Frequent Values of Categorical Data: \n" + str(
-                                            get_top_frequent_values(df))
-
-                                        # Call the function and collect the result
-                                        dictionary_chunk = getDataDictionary(data)
-                                        dictionary_chunks.append(dictionary_chunk)
-
-                                    # Remove the progress bar when complete
-                                    progress_placeholder.empty()
-                                with st.spinner("Putting it all together..."):
-                                    dictionary = assembleDictionaryParts(dictionary_chunks)
-                                    st.markdown(dictionary)
-                        except:
-                            pass
-            with tab1:
-                suggestedQuestions = suggestQuestion(dictionary)
-                print(suggestedQuestions)
-                st.write(suggestedQuestions)
-                # Initialize businessQuestion session state variable
-                if 'businessQuestion' not in st.session_state:
-                    st.session_state["businessQuestion"] = ""
-
-                # Function to clear text input
-                def clear_text():
-                    st.session_state["businessQuestion"] = ""
-
-                # st.session_state["businessQuestion"] = "How many customers from California had a bad loan?"
-                st.session_state["businessQuestion"] = st.text_input(label="Question",value=st.session_state["businessQuestion"])
-
-                # button columns
-                buttonContainer = st.container()
-                buttonCol1, buttonCol2, empty = buttonContainer.columns([1, 1, 8])
-                submitQuestion = buttonCol1.button(label="Ask", use_container_width=True, type="primary")
-                clearButton = buttonCol2.button(label="clear", use_container_width=True, type="secondary",on_click=clear_text)
-                if submitQuestion:
-                    with st.spinner("Analyzing... "):
-                        print("------------")
-                        print(st.session_state["businessQuestion"])
-                        print("------------")
-                        prompt = "Business Question: " + str(st.session_state["businessQuestion"]) +"\n Data Sample: \n" + str(df.head(3)) + "\n Unique and Frequent Values of Categorical Data: \n" + str(get_top_frequent_values(df)) + str("\n Data Dictionary: \n") + str(dictionary)
-                        print(prompt)
-                        print("------------")
-
-                        attempts = 0
-                        max_retries = 10
-                        while attempts < max_retries:
-                            print("Generating code to get the answer. Attempt: " + str(attempts))
-                            pythonCode = None
-                            try:
-                                pythonCode, results = executePythonCode(prompt, df)
-                                print("Query Result:")
-                                print(pythonCode)
-                                print(results.head(3))
-                                if results.empty: raise ValueError("The DataFrame is empty, retrying...")
-                                break  # If the function succeeds, exit the loop
-                            except Exception as e:
-                                attempts += 1
-                                print(f"Query attempt {attempts} failed with error: {repr(e)}")
-                                pythonCode_str = str(pythonCode) if pythonCode is not None else "None"
-                                prompt += f"\nQUERY FAILED! Attempt {attempts} failed with error: {repr(e)}\nSQL Code: {pythonCode_str}"
-                                if attempts == max_retries:
-                                    print("Max retries reached.")
-                                    break
-
-                        try:
-                            with st.expander(label="Code", expanded=False):
-                                st.code(pythonCode, language="sql")
-                            with st.expander(label="Result", expanded=True):
-                                st.table(results)
-                        except:
-                            st.write(
-                                "I tried a few different ways, but couldn't get a working solution. Rephrase the question and try again.")
-
-                    with st.spinner("Visualization and analysis in progress..."):
-                        createChartsAndBusinessAnalysis(st.session_state["businessQuestion"], results, prompt)
-
-
-
+        if st.session_state.get("selectedCSVFile", None) is not None:
+            with st.spinner(text="Analyzing table structure, see Explore tab for details..."):
+                display_csv_explore_tab(tab2)
+            display_csv_analysis_tab(tab1)
 
 # Main app
 def _main():
@@ -1141,6 +1159,7 @@ def _main():
     st.markdown(hide_streamlit_style, unsafe_allow_html=True)  # This lets you hide the Streamlit branding
 
     mainPage()
+
 
 if __name__ == "__main__":
     _main()
