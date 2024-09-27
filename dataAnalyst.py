@@ -65,6 +65,8 @@ if "snowflake_submit_button" not in st.session_state:
 if "csv_selection_button" not in st.session_state:
     st.session_state["csv_selection_button"] = False
 
+if "cache_cleared" not in st.session_state:
+    st.session_state["cache_cleared"] = False
 @st.cache_data(show_spinner=False)
 def getSnowflakeTableDescriptions(tables, user, password, account, warehouse, database, schema):
     # Establish a connection to Snowflake
@@ -860,6 +862,13 @@ def setup_sidebar():
         st.session_state["csvUploadButton"] = st.file_uploader(label="Or, upload a CSV file",
                                                                accept_multiple_files=False)
         process_csv_upload()
+        with st.expander("Clear Cache", expanded=False):
+            st.write("To reset any saved data and completely start over, clear the cache. Only use this if you are experiencing a problem.")
+            st.button("Clear Cache", on_click=clear_cache_callback)
+            if st.session_state["cache_cleared"]:
+                st.success("Cache cleared successfully!")
+                # Reset the flag
+                st.session_state["cache_cleared"] = False
 
 def load_snowflake_tables():
     try:
@@ -1131,6 +1140,15 @@ def read_svgs_and_generate_html_report():
 def create_and_display_download_link():
     st.session_state["download_link"] = create_download_link(st.session_state["html_content"], 'report.html')
     st.markdown(st.session_state["download_link"], unsafe_allow_html=True)
+
+
+def clear_cache_callback():
+    # Clear both data and resource caches
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+    # Update session state to show success message
+    st.session_state["cache_cleared"] = True
 
 def mainPage():
     setup_sidebar()
