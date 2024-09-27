@@ -863,7 +863,7 @@ def setup_sidebar():
                                                                accept_multiple_files=False)
         process_csv_upload()
         with st.expander("Clear Cache", expanded=False):
-            st.write("To reset any saved data and completely start over, clear the cache. Only use this if you are experiencing a problem.")
+            st.write("To reset any saved data and completely start over, clear the cache. You will have to reload your dataset.")
             st.button("Clear Cache", on_click=clear_cache_callback)
             if st.session_state["cache_cleared"]:
                 st.success("Cache cleared successfully!")
