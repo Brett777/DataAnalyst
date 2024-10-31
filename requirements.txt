@@ -13,3 +13,5 @@ statsmodels
 markdown
 cryptography
 snowflake-snowpark-python
+openpyxl
+kaleido
