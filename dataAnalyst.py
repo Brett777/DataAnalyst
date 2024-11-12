@@ -21,7 +21,7 @@ pd.set_option('display.max_rows', 500)
 pd.set_option('display.width', 1000)
 
 # Set to True to use a custom model deployment. False to use a DataRobot Playground model.
-CUSTOM_MODEL_MODE = False
+CUSTOM_MODEL_MODE = True
 
 # Snowflake connection details
 user = st.secrets.snowflake_credentials.user
