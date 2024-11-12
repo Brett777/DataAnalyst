@@ -203,7 +203,7 @@ def summarizeTable(dictionary, table):
     if CUSTOM_MODEL_MODE:
         data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
     else:
-        data = pd.DataFrame({[systemPrompt, str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
+        data = pd.DataFrame({"promptText": [systemPrompt, str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
     deployment_id = st.secrets.datarobot_deployment_id.summarize_table
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -230,7 +230,7 @@ def getDataDictionary(prompt):
     if CUSTOM_MODEL_MODE:
         data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
     else:
-        data = pd.DataFrame({[systemPrompt, prompt]})
+        data = pd.DataFrame({"promptText":[systemPrompt, prompt]})
     deployment_id = st.secrets.datarobot_deployment_id.data_dictionary_maker
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
