@@ -2,12 +2,6 @@ import re
 import concurrent.futures
 import os
 import requests
-import openpyxl
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font, Alignment
-from openpyxl.drawing.image import Image
-from openpyxl.worksheet.dimensions import ColumnDimension
-from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -26,8 +20,8 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.width', 1000)
 
-# Set to True to use a single OpenAI deployment for all request. False to separate requests to different deployments.
-openAImode = True
+# Set to True to use a custom model deployment. False to use a DataRobot Playground model.
+CUSTOM_MODEL_MODE = False
 
 # Snowflake connection details
 user = st.secrets.snowflake_credentials.user
@@ -71,8 +65,6 @@ def initialize_session_state():
         'html_content': '',
         'download_link': '',
         'csvUploadButton': None,
-        'excel_content': None,
-        'chart_code' : None
     }
     for key, value in default_values.items():
         st.session_state.setdefault(key, value)
@@ -175,13 +167,15 @@ def getSnowflakeTableDescriptions(tables, user, password, account, warehouse, da
 
     return descriptions
 
-
 @st.cache_data(show_spinner=False)
 def suggestQuestion(description):
     # description = "this is a test."
     systemPrompt = st.secrets.prompts.suggest_a_question
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [description]})
-    deployment_id = st.secrets.datarobot_deployment_id.summarize_table
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [description]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, description]})
+    deployment_id = st.secrets.datarobot_deployment_id.suggest_a_question
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
     DATAROBOT_KEY = st.secrets.datarobot_credentials.DATAROBOT_KEY
@@ -206,8 +200,10 @@ def summarizeTable(dictionary, table):
     systemPrompt = systemPrompt.format(table=table)
     # table = "This is a test"
     # dictionary = "this is a test dictionary."
-    data = pd.DataFrame(
-        {"systemPrompt": systemPrompt, "promptText": [str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
+    else:
+        data = pd.DataFrame({[systemPrompt, str(dictionary) + "\nTABLE TO DESCRIBE: " + str(table)]})
     deployment_id = st.secrets.datarobot_deployment_id.summarize_table
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -231,8 +227,10 @@ def getDataDictionary(prompt):
     systemPrompt = st.secrets.prompts.get_data_dictionary
     # prompt = data
     # prompt = "this is a test. are you there?"
-
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    else:
+        data = pd.DataFrame({[systemPrompt, prompt]})
     deployment_id = st.secrets.datarobot_deployment_id.data_dictionary_maker
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -255,8 +253,10 @@ def getDataDictionary(prompt):
 def assembleDictionaryParts(parts):
     systemPrompt = st.secrets.prompts.assemble_data_dictionary
     # parts = data
-
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [parts]})
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [parts]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, parts]})
     deployment_id = st.secrets.datarobot_deployment_id.data_dictionary_assembler
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -278,7 +278,10 @@ def assembleDictionaryParts(parts):
 def getPythonCode(prompt):
     systemPrompt = st.secrets.prompts.get_python_code
     # prompt = "test"
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, prompt]})
     deployment_id = st.secrets.datarobot_deployment_id.python_code_generator
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -321,9 +324,12 @@ def executePythonCode(prompt, df):
 def getSnowflakeSQL(prompt, warehouse=warehouse, database=database, schema=schema):
     systemPrompt = st.secrets.prompts.get_snowflake_sql
     systemPrompt = systemPrompt.format(warehouse=warehouse, database=database, schema=schema)
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
-        str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
-            database) + "\nschema = " + str(schema)]})
+    if CUSTOM_MODEL_MODE:
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
+            str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
+                database) + "\nschema = " + str(schema)]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt,str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(database) + "\nschema = " + str(schema)]})
     deployment_id = st.secrets.datarobot_deployment_id.sql_code_generator
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -382,9 +388,12 @@ def executeSnowflakeQuery(prompt, user, password, account, warehouse, database, 
 def getSnowflakePython(prompt, warehouse=warehouse, database=database, schema=schema):
     systemPrompt = st.secrets.prompts.get_snowflake_snowpark
     systemPrompt = systemPrompt.format(warehouse=warehouse, database=database, schema=schema)
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
-        str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
+    if CUSTOM_MODEL_MODE:
+            data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [
+            str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(
             database) + "\nschema = " + str(schema)]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, str(prompt) + "\nSNOWFLAKE ENVIRONMENT:\nwarehouse = " + str(warehouse) + "\ndatabase = " + str(database) + "\nschema = " + str(schema)]})
     deployment_id = st.secrets.datarobot_deployment_id.sql_code_generator
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -473,7 +482,10 @@ def getTableSample(sampleSize, table):
 def getChartCode(prompt):
     systemPrompt = st.secrets.prompts.get_chart_code
     # prompt = "test"
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    if CUSTOM_MODEL_MODE:   
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, prompt]})
     deployment_id = st.secrets.datarobot_deployment_id.plotly_code_generator
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -501,7 +513,6 @@ def getChartCode(prompt):
 def createCharts(prompt, results):
     print("getting chart code...")
     chartCode = getChartCode(prompt + str(results))
-    st.session_state["chart_code"] = chartCode
     print(chartCode.replace("```python", "").replace("```", ""))
     function_dict = {}
     exec(chartCode.replace("```python", "").replace("```", ""), function_dict)  # execute the code created by our LLM
@@ -512,7 +523,10 @@ def createCharts(prompt, results):
 @st.cache_data(show_spinner=False)
 def getBusinessAnalysis(prompt):
     systemPrompt = st.secrets.prompts.get_business_analysis
-    data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    if CUSTOM_MODEL_MODE:   
+        data = pd.DataFrame({"systemPrompt": systemPrompt, "promptText": [prompt]})
+    else:
+        data = pd.DataFrame({"promptText": [systemPrompt, prompt]})
     deployment_id = st.secrets.datarobot_deployment_id.business_analysis
     API_URL = f'{st.secrets.datarobot_credentials.PREDICTION_SERVER}/predApi/v1.0/deployments/{deployment_id}/predictions'
     API_KEY = st.secrets.datarobot_credentials.API_KEY
@@ -600,7 +614,7 @@ def createChartsAndBusinessAnalysis(businessQuestion, results, prompt):
 @st.cache_data(show_spinner=False)
 def create_download_link(html_content, filename):
     b64 = base64.b64encode(html_content.encode()).decode()  # B64 encode
-    href = f'<a href="data:text/html;base64,{b64}" download="{filename}">Download as HTML</a>'
+    href = f'<a href="data:text/html;base64,{b64}" download="{filename}">Download this report</a>'
     return href
 
 @st.cache_data(show_spinner=False)
@@ -930,7 +944,7 @@ def display_analysis_tab(tab):
 
         st.session_state["businessQuestion"] = st.text_input(
             label="Question",
-            # value=st.session_state["businessQuestion"],
+            value=st.session_state["businessQuestion"],
             on_change=text_input_enterKey
         )
         display_action_buttons()
@@ -1006,7 +1020,7 @@ def display_csv_analysis_tab(tab):
 
         st.session_state["businessQuestion"] = st.text_input(
             label="Question",
-            # value=st.session_state["businessQuestion"],
+            value=st.session_state["businessQuestion"],
             on_change=text_input_enterKey
         )
         display_action_buttons()
@@ -1133,15 +1147,10 @@ def analyze_and_generate_report_csv():
 def generate_report(full_dictionary):
     read_svgs_and_generate_html_report()
     create_and_display_download_link()
-    read_svgs_and_generate_excel_report()
-    create_and_display_excel_download_link()
 
 def generate_report_csv():
     read_svgs_and_generate_html_report()
     create_and_display_download_link()
-    read_svgs_and_generate_excel_report()
-    create_and_display_excel_download_link()
-
 
 def read_svgs_and_generate_html_report():
     st.session_state["datarobot_logo_svg"] = read_svg_as_base64("DataRobotLogo.svg")
@@ -1154,122 +1163,10 @@ def read_svgs_and_generate_html_report():
                                                             st.session_state["analysis"],
                                                             st.session_state["datarobot_logo_svg"],
                                                             st.session_state["customer_logo_svg"])
+
 def create_and_display_download_link():
     st.session_state["download_link"] = create_download_link(st.session_state["html_content"], 'report.html')
     st.markdown(st.session_state["download_link"], unsafe_allow_html=True)
-@st.cache_data(show_spinner=False)
-def create_download_link_excel(excel_data, filename):
-    if not excel_data:
-        st.error("Excel content is empty. Cannot create a download link.")
-        return ""
-    b64 = base64.b64encode(excel_data).decode()  # B64 encode
-    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">Download as Excel</a>'
-    return href
-
-@st.cache_data(show_spinner=False)
-def read_svg(file_path):
-    with open(file_path, 'r') as file:
-        content = file.read()
-    return content
-
-@st.cache_data(show_spinner=False)
-def read_svg_as_base64(file_path):
-    with open(file_path, 'rb') as file:
-        return base64.b64encode(file.read()).decode('utf-8')
-
-# Callback function to generate Excel content
-@st.cache_data(show_spinner=False)
-def generate_excel_report(businessQuestion, sqlcode, results, fig1, fig2, analysis):
-    output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='openpyxl')
-
-    try:
-        # Writing data to Excel
-        if businessQuestion:
-            df_business_question = pd.DataFrame({'Business Question': [businessQuestion]})
-            df_business_question.to_excel(writer, index=False, sheet_name='Business Question')
-            worksheet = writer.sheets['Business Question']
-            for column_cells in worksheet.columns:
-                length = max(len(str(cell.value)) for cell in column_cells)
-                worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = length + 2
-
-        if results is not None and not results.empty:
-            results.to_excel(writer, index=False, sheet_name='Results')
-            worksheet = writer.sheets['Results']
-            for column_cells in worksheet.columns:
-                length = max(len(str(cell.value)) for cell in column_cells)
-                worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = length + 2
-            worksheet.auto_filter.ref = worksheet.dimensions
-
-        # Writing analysis to Excel
-        if analysis and analysis.strip():
-            analysis_sections = {
-                "The Bottom Line": "",
-                "Additional Insights": "",
-                "Follow Up Questions": ""
-            }
-            current_section = None
-            for line in analysis.splitlines():
-                line = line.strip()
-                if line.startswith("###"):
-                    header = line.replace("###", "").strip()
-                    if header in analysis_sections:
-                        current_section = header
-                elif current_section:
-                    analysis_sections[current_section] += line + "\n"
-
-            # Write each section to individual cells
-            worksheet = writer.book.create_sheet(title='Analysis')
-            row = 1
-            for section, content in analysis_sections.items():
-                worksheet[f'A{row}'] = section
-                worksheet[f'A{row}'].font = Font(bold=True)
-                cell = worksheet[f'A{row + 1}']
-                # content = content.strip().replace('', '')  # Replace newlines for better formatting
-                cell.value = content
-                cell.alignment = Alignment(wrap_text=True)
-                worksheet.column_dimensions['A'].width = 50
-                row += 3
-
-            for column_cells in worksheet.columns:
-                length = max(len(str(cell.value)) for cell in column_cells)
-                worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = min(length + 2, 50)
-        else:
-            st.error("No analysis data found to generate the report.")
-
-        # Add Plotly charts as images
-        worksheet = writer.book.create_sheet(title="Charts")
-        if fig1:
-            fig1_bytes = fig1.to_image(format="png")
-            img1 = Image(BytesIO(fig1_bytes))
-            worksheet.add_image(img1, "A1")
-        if fig2:
-            fig2_bytes = fig2.to_image(format="png")
-            img2 = Image(BytesIO(fig2_bytes))
-            worksheet.add_image(img2, "A20")
-
-        writer._save()  # Close the writer before accessing the value
-        return output.getvalue()
-    except Exception as e:
-        st.error(f"An error occurred while generating the Excel report: {e}")
-        return None
-
-def read_svgs_and_generate_excel_report():
-    st.session_state["datarobot_logo_svg"] = read_svg_as_base64("DataRobotLogo.svg")
-    st.session_state["customer_logo_svg"] = read_svg_as_base64("small_square_placeholder.svg")
-
-    st.session_state["excel_content"] = generate_excel_report(st.session_state.get("businessQuestion"),
-                                                               st.session_state.get("sqlCode"),
-                                                               st.session_state.get("results"), st.session_state.get("fig1"),
-                                                               st.session_state.get("fig2"),
-                                                               st.session_state.get("analysis"))
-
-def create_and_display_excel_download_link():
-    st.session_state["download_link_excel"] = create_download_link_excel(st.session_state.get("excel_content"), 'report.xlsx')
-    if st.session_state["download_link_excel"]:
-        st.markdown(st.session_state["download_link_excel"], unsafe_allow_html=True)
-
-
 
 
 def clear_cache_callback():
